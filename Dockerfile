@@ -22,9 +22,11 @@ RUN apt-get update && \
         libxrandr2 \
         xdg-utils \
         --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/* \
-    chromium \
-    chromium-driver
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    apt-get install -y chromium chromium-driver
+ 
 
 WORKDIR /usr/src/app
 
