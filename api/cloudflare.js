@@ -4,7 +4,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const cache = new Map();
 
-async function getCloudflareCookie(forceRefresh = false) {
+async function getCloudflareCookie(forceRefresh = true) {
     console.log(`[Cloudflare] getCloudflareCookie chiamato (forceRefresh=${forceRefresh})`);
     if (cache.has('cf') && !forceRefresh) {
         console.log('[Cloudflare] Cookie trovato in cache');
