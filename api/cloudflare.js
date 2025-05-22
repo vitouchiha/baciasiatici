@@ -11,9 +11,16 @@ async function getCloudflareCookie(forceRefresh = true) {
         return cache.get('cf');
     }
     const browser = await puppeteerExtra.launch({
+  headless: true,
+  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser'
+});
+    /*
+    const browser = await puppeteerExtra.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
+    */
     try {
         const page = await browser.newPage();
         page.setDefaultNavigationTimeout(60000);
