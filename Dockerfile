@@ -1,4 +1,4 @@
-FROM node:23-slim
+FROM node:20-slim
 
 # Installa dipendenze per Chromium
 RUN apt-get update && \
@@ -22,11 +22,16 @@ RUN apt-get update && \
         libxrandr2 \
         xdg-utils \
         --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* \
+    chromium \
+    chromium-driver
 
 WORKDIR /usr/src/app
 
 COPY package*.json ./
+
+RUN npm install -g npm@11.4.1
+
 RUN npm install
 
 COPY . .
