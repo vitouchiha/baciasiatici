@@ -5,7 +5,31 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
 const { decryptKisskhSubtitleStatic } = require('./sub_decrypter');
 
+const fs = require('fs');
+function findChromiumExecutable() {
+    const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chrome'
+    ];
+    for (const candidate of candidates) {
+        if (candidate && fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error('Chromium executable not found! Checked: ' + candidates.join(', '));
+}
+
 let vCache = new Map();
+
+function extractEpisodeNumericId(episodeId) {
+    if (typeof episodeId === 'number') return episodeId;
+    if (episodeId && episodeId.includes(':')) {
+        const parts = episodeId.split(':');
+        return parts[1];
+    }
+    return episodeId;
+}
 
 async function getAxiosHeaders() {
     const cfCookie = await getCloudflareCookie();
@@ -55,7 +79,6 @@ async function getSeriesDetails(serieId) {
         description: data.description,
         releaseDate: data.releaseDate,
         episodes: (data.episodes || []).map(ep => ({
-            // id in formato "kisskh_SERIEID:EPISODEID"
             id: `kisskh_${data.id}:${ep.id}`,
             title: ep.title || `Episode ${ep.number}`,
             season: ep.season || 1,
@@ -65,20 +88,21 @@ async function getSeriesDetails(serieId) {
 }
 
 async function getVParam(serieId, episodeId) {
-    const cacheKey = `${serieId}_${episodeId}`;
+    const epId = extractEpisodeNumericId(episodeId);
+    const cacheKey = `${serieId}_${epId}`;
     const cached = vCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < 2 * 60 * 60 * 1000) {
         console.log(`[getVParam] cache hit per ${cacheKey}`);
         return cached.value;
     }
-
-    const browser = await puppeteerExtra.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    
+const browser = await puppeteerExtra.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: findChromiumExecutable()
+});
 
     let vParam = null;
-
     try {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
@@ -93,28 +117,27 @@ async function getVParam(serieId, episodeId) {
             secure: true,
             sameSite: 'Lax'
         });
-        const targetUrl = `https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`;
+        const targetUrl = `https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${epId}`;
         console.log(`[getVParam] navigating to ${targetUrl}`);
-
-        // Intercetta le richieste .m3u8 subito all'apertura
         page.on('request', request => {
             const url = request.url();
-            const match = url.match(/Ep\d+_index\.m3u8\?v=([a-zA-Z0-9]+)/);
-            if (match) {
-                vParam = match[1];
-                console.log(`[getVParam] intercettato vParam: ${vParam} da url: ${url}`);
+            // Intercetta SOLO url che iniziano con https:// e finiscono con .m3u8
+            if (/^https:\/\/.*\.m3u8(\?.*)?$/.test(url)) {
+                const match = url.match(/[?&]v=([a-zA-Z0-9]+)/);
+                if (match) {
+                    vParam = match[1];
+                    console.log(`[getVParam] intercettato vParam: ${vParam} da url: ${url}`);
+                }
             }
         });
-
         await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
         await new Promise(resolve => setTimeout(resolve, 4000));
-
         if (vParam) {
             vCache.set(cacheKey, { value: vParam, timestamp: Date.now() });
             console.log(`[getVParam] trovato: ${vParam}`);
             return vParam;
         } else {
-            console.warn(`[getVParam] parametro v non trovato per ${serieId} ep ${episodeId}`);
+            console.warn(`[getVParam] parametro v non trovato per ${serieId} ep ${epId}`);
             return null;
         }
     } catch (error) {
@@ -131,36 +154,78 @@ async function getEpisodeNumber(serieId, episodeId) {
     if (!details || !details.episodes) throw new Error('Serie o episodi non trovati');
     const episode = details.episodes.find(ep => String(ep.id) === String(episodeId));
     if (!episode) throw new Error('Episodio non trovato');
-    return episode.number;
+    return episode.episode || episode.number;
 }
 
 async function getEpisodeStream(serieId, episodeId) {
-    console.log(`[getEpisodeStream] serieId: ${serieId}, episodeId: ${episodeId}`);
-    const details = await getSeriesDetails(serieId);
-    if (!details || !details.episodes) {
-        console.error('[getEpisodeStream] Nessun dettaglio serie trovato!');
+    const epId = extractEpisodeNumericId(episodeId);
+    const cacheKey = `${serieId}_${epId}_stream`;
+    if (vCache.has(cacheKey)) {
+        const cached = vCache.get(cacheKey);
+        if (Date.now() - cached.timestamp < 2 * 60 * 60 * 1000) {
+            console.log(`[getEpisodeStream] cache hit per ${cacheKey}`);
+            return cached.value;
+        }
+    }
+
+const browser = await puppeteerExtra.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: findChromiumExecutable()
+});
+
+    let streamUrl = null;
+    try {
+        const page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+        const cfCookieString = await getCloudflareCookie();
+        const cfClearanceValue = cfCookieString.split('=')[1];
+        await page.setCookie({
+            name: 'cf_clearance',
+            value: cfClearanceValue,
+            domain: 'kisskh.co',
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax'
+        });
+        const targetUrl = `https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${epId}`;
+        console.log(`[getEpisodeStream] navigating to ${targetUrl}`);
+        page.on('request', request => {
+            const url = request.url();
+            // Intercetta SOLO url che iniziano con https:// e finiscono con .m3u8 e hanno v param
+            if (/^https:\/\/.*\.m3u8(\?.*)?$/.test(url) && /[?&]v=([a-zA-Z0-9]+)/.test(url)) {
+                streamUrl = url;
+                console.log(`[getEpisodeStream] intercettato stream: ${url}`);
+            }
+        });
+        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        await new Promise(resolve => setTimeout(resolve, 8000));
+        if (streamUrl) {
+            vCache.set(cacheKey, { value: streamUrl, timestamp: Date.now() });
+            return streamUrl;
+        } else {
+            console.warn(`[getEpisodeStream] Nessun stream intercettato per ${serieId}:${epId}`);
+            return null;
+        }
+    } catch (err) {
+        console.error('[getEpisodeStream] Errore:', err.stack || err.message);
         return null;
+    } finally {
+        await browser.close();
     }
-    const episode = details.episodes.find(ep => String(ep.id) === String(episodeId));
-    if (!episode) {
-        console.error('[getEpisodeStream] Episodio non trovato!');
-        return null;
-    }
-    const episodeNumber = episode.number;
-    const vParam = await getVParam(serieId, episodeId);
-    let streamUrl = `https://hls.streamsub.top/hls07/${serieId}/Ep${episodeNumber}_index.m3u8`;
-    if (vParam) {
-        streamUrl += `?v=${vParam}`;
-    }
-    console.log('[getEpisodeStream] streamUrl:', streamUrl);
-    return streamUrl;
 }
 
+
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
-    const browser = await puppeteerExtra.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    const epId = extractEpisodeNumericId(episodeId);
+    
+const browser = await puppeteerExtra.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: findChromiumExecutable()
+});
+
     let subApiUrl = null;
     try {
         const page = await browser.newPage();
@@ -172,7 +237,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 console.log('[DEBUG] intercettato endpoint sottotitolo:', url);
             }
         });
-        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`, {
+        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${epId}`, {
             waitUntil: 'networkidle2',
             timeout: 60000
         });
@@ -219,9 +284,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 } else if (realBuf.length > 32) {
                     text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
                 }
-                if (text) {
-                    decodedSubs.push({ lang, text });
-                }
+                if (text) decodedSubs.push({ lang, text });
             } catch (err) {
                 console.warn(`[WARN] [${lang}] Errore recupero sottotitolo:`, err.message);
             }

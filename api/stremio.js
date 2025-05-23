@@ -1,45 +1,28 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const kisskh = require('./kisskh');
-// const seriesDetailsCache = new Map();
-
-// --- QUI INSERISCI LA FUNZIONE ---
-async function getCachedSeriesDetails(seriesId) {
-    if (seriesDetailsCache.has(seriesId)) {
-        const cached = seriesDetailsCache.get(seriesId);
-        if (Date.now() - cached.timestamp < 2 * 60 * 60 * 1000) {
-            console.log(`[Cache] getSeriesDetails hit per ${seriesId}`);
-            return cached.data;
-        } else {
-            seriesDetailsCache.delete(seriesId);
-        }
-    }
-    try {
-        const data = await kisskh.getSeriesDetails(seriesId);
-        if (data) {
-            seriesDetailsCache.set(seriesId, { data, timestamp: Date.now() });
-            return data;
-        }
-        // fallback: ritorna la cache vecchia se esiste
-        if (seriesDetailsCache.has(seriesId)) {
-            return seriesDetailsCache.get(seriesId).data;
-        }
-        return null;
-    } catch (e) {
-        if (seriesDetailsCache.has(seriesId)) {
-            return seriesDetailsCache.get(seriesId).data;
-        }
-        return null;
-    }
-}
-
 const { getCloudflareCookie } = require('./cloudflare');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
 
+const fs = require('fs');
+function findChromiumExecutable() {
+    const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chrome'
+    ];
+    for (const candidate of candidates) {
+        if (candidate && fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error('Chromium executable not found! Checked: ' + candidates.join(', '));
+}
+
 const builder = new addonBuilder({
     id: 'com.kisskh.vercel.addon',
-    version: '1.0.6',
+    version: '1.0.5',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
@@ -89,7 +72,12 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
         }
     }
 
-    const browser = await puppeteerExtra.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const browser = await puppeteerExtra.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: findChromiumExecutable()
+});
+
     let streamUrl = null;
 
     try {
@@ -108,12 +96,13 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
             sameSite: 'Lax'
         });
 
-        const targetUrl = `https://kisskh.co/Drama/Any/Episode-Any?id=${seriesId}&ep=${episodeId}`;
+        const epId = episodeId.includes(':') ? episodeId.split(':')[1] : episodeId;
+        const targetUrl = `https://kisskh.co/Drama/Any/Episode-Any?id=${seriesId}&ep=${epId}`;
         console.log(`[resolveEpisodeStreamUrl] navigating to ${targetUrl}`);
 
         page.on('request', request => {
             const url = request.url();
-            if (url.includes('.m3u8') || url.includes('.mp4')) {
+            if (url.includes('.m3u8')) { // || url.includes('.mp4')
                 console.log(`[resolveEpisodeStreamUrl] intercettato stream: ${url}`);
                 streamUrl = url;
             }
@@ -148,82 +137,107 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-  const start = Date.now();
     console.log(`[MetaHandler] richiesta meta per id=${id}`);
-  
-  const duration = Date.now() - start;
-  console.log(`[MetaHandler] Tempo risposta: ${duration}ms`);
-  
     if (type !== 'series') return { meta: null };
 
-  const seriesId = id.replace('kisskh_', '');
-  let details;
-  try {
-    details = await getCachedSeriesDetails(seriesId);
-    console.log('[MetaHandler] Dettagli recuperati:', JSON.stringify(details, null, 2));
-  } catch (e) {
-    console.error('[MetaHandler] errore getSeriesDetails:', e.stack || e.message);
-    return {
-      meta: {
-        id,
+    const seriesId = id.replace('kisskh_', '');
+    let details;
+    try {
+        details = await getCachedSeriesDetails(seriesId);
+        console.log('[MetaHandler] Dettagli recuperati:', JSON.stringify(details, null, 2));
+    } catch (e) {
+        console.error('[MetaHandler] errore getSeriesDetails:', e.stack || e.message);
+        return {
+            meta: {
+                id,
+                type: 'series',
+                name: 'Errore di caricamento',
+                description: 'Impossibile recuperare i dettagli della serie. Riprova più tardi.',
+                poster: '',
+                videos: []
+            }
+        };
+    }
+
+    if (!details || !Array.isArray(details.episodes) || details.episodes.length === 0) {
+        console.warn('[MetaHandler] dettagli incompleti o episodi mancanti per', seriesId);
+        return {
+            meta: {
+                id,
+                type: 'series',
+                name: details?.title || 'Titolo non disponibile',
+                description: 'Dettagli serie non completi o mancanti.',
+                poster: details?.thumbnail || '',
+                videos: []
+            }
+        };
+    }
+
+    // RIMAPPA CORRETTAMENTE GLI EPISODI
+    const videos = details.episodes.map(ep => ({
+        id: `kisskh_${details.id}:${ep.id}`,
+        title: ep.title || `Episode ${ep.number}`,
+        season: ep.season || 1,
+        episode: ep.number
+    }));
+
+    const meta = {
+        id: `kisskh_${details.id}`,
         type: 'series',
-        name: details?.title || 'Titolo non disponibile',
-    description: 'Dettagli serie non completi o mancanti. Prova a ricaricare la pagina o attendi qualche secondo.',
-    poster: details?.thumbnail || '',
-    videos: []
-      }
+        name: details.title || '',
+        poster: details.thumbnail || '',
+        background: details.thumbnail || '',
+        posterShape: 'poster',
+        description: (details.description || '').replace(/\r?\n+/g, ' ').trim(),
+        releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
+        videos,
     };
-  }
 
-  if (!details || !Array.isArray(details.episodes) || details.episodes.length === 0) {
-    console.warn('[MetaHandler] dettagli incompleti o episodi mancanti per', seriesId);
-    return {
-      meta: {
-        id,
-        type: 'series',
-        name: details?.title || 'Titolo non disponibile',
-        description: 'Dettagli serie non completi o mancanti. Prova a ricaricare la pagina.',
-        poster: details?.thumbnail || '',
-        videos: []
-      }
-    };
-  }
-
-  // RIMAPPA CORRETTAMENTE GLI EPISODI
-  const videos = details.episodes.map(ep => ({
-    id: `kisskh_${details.id}:${ep.id}`,
-    title: ep.title || `Episode ${ep.number}`,
-    season: ep.season || 1,
-    episode: ep.number
-  }));
-
-  const meta = {
-    id: `kisskh_${details.id}`,
-    type: 'series',
-    name: details.title || '',
-    poster: details.thumbnail || '',
-    background: details.thumbnail || '',
-    posterShape: 'poster',
-    description: (details.description || '').replace(/\r?\n+/g, ' ').trim(),
-    releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
-    videos,
-  };
-  return { meta };
+    return { meta };
 });
 
 
 builder.defineStreamHandler(async ({ type, id }) => {
-  console.log(`[StreamHandler] richiesta stream per id=${id}`);
-  if (type !== 'series') return { streams: [] };
-  if (!id.includes(':')) {
-    console.log(`[StreamHandler] ignorata richiesta generica ${id}`);
-    return { streams: [] }; // <-- FIX QUI
-  }
+    console.log(`[StreamHandler] richiesta stream per id=${id}`);
+    if (type !== 'series') return { streams: [] };
+    if (!id.includes(':')) {
+        console.log(`[StreamHandler] ignorata richiesta generica ${id}`);
+        return {
+            streams: [{
+                title: 'Seleziona un episodio per vedere lo stream',
+                url: '',
+                isFree: true,
+                behaviorHints: { notWebReady: true }
+            }]
+        };
+    }
 
-    const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
+    // PATCH: Parsing robusto dell'ID
+    let seriesId, episodeId;
+    if (id.startsWith('kisskh_')) {
+        const parts = id.split(':');
+        if (parts.length === 2) {
+            // Caso normale: "kisskh_123:456"
+            seriesId = parts[0].replace('kisskh_', '');
+            episodeId = `kisskh_${seriesId}:${parts[1]}`;
+        } else if (parts.length === 3) {
+            // Caso anomalo: "kisskh_123:kisskh_123:456"
+            seriesId = parts[0].replace('kisskh_', '');
+            episodeId = `kisskh_${seriesId}:${parts[2]}`;
+        } else {
+            // Fallback
+            seriesId = id.replace('kisskh_', '').split(':')[0];
+            episodeId = id;
+        }
+    } else {
+        // Fallback per ID senza prefisso
+        seriesId = id.split(':')[0];
+        episodeId = id;
+    }
+    console.log(`[StreamHandler] seriesId=${seriesId} episodeId=${episodeId}`);
 
     try {
-        const episodeNumber = await kisskh.getEpisodeNumber(seriesId, episodeId);
+        // PATCH: RIMOSSO episodeNumber inutilizzato
         const streamUrl = await resolveEpisodeStreamUrl(seriesId, episodeId);
 
         if (!streamUrl) {
@@ -259,6 +273,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
         };
     }
 });
+
 
 builder.defineSubtitlesHandler(async ({ type, id }) => {
     console.log(`[SubtitlesHandler] richiesta subtitles per id=${id}`);

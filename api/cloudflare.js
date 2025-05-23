@@ -2,25 +2,36 @@ const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
 
+const fs = require('fs');
+function findChromiumExecutable() {
+    const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chrome'
+    ];
+    for (const candidate of candidates) {
+        if (candidate && fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error('Chromium executable not found! Checked: ' + candidates.join(', '));
+}
+
 const cache = new Map();
 
-async function getCloudflareCookie(forceRefresh = true) {
+async function getCloudflareCookie(forceRefresh = false) {
     console.log(`[Cloudflare] getCloudflareCookie chiamato (forceRefresh=${forceRefresh})`);
     if (cache.has('cf') && !forceRefresh) {
         console.log('[Cloudflare] Cookie trovato in cache');
         return cache.get('cf');
     }
-    const browser = await puppeteerExtra.launch({
-  headless: true,
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser'
+
+const browser = await puppeteerExtra.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: findChromiumExecutable()
 });
-    /*
-    const browser = await puppeteerExtra.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    */
+
     try {
         const page = await browser.newPage();
         page.setDefaultNavigationTimeout(60000);
