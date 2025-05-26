@@ -1,0 +1,12 @@
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.js" }],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cache-Control", "value": "s-maxage=3600, stale-while-revalidate=60" }
+      ]
+    }
+  ]
+}
