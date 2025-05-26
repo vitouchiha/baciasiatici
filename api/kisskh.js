@@ -3,22 +3,7 @@ const { getCloudflareCookie } = require('./cloudflare');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
-const { decryptKisskhSubtitleStatic } = require('./sub_decrypter');
-
-const fs = require('fs');
-function findChromiumExecutable() {
-    const candidates = [
-        process.env.PUPPETEER_EXECUTABLE_PATH,
-        '/usr/bin/chromium',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/google-chrome',
-        '/usr/bin/chrome'
-    ];
-    for (const candidate of candidates) {
-        if (candidate && fs.existsSync(candidate)) return candidate;
-    }
-    throw new Error('Chromium executable not found! Checked: ' + candidates.join(', '));
-}
+const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./sub_decrypter');
 
 let vCache = new Map();
 
@@ -51,6 +36,8 @@ function buildApiUrl({ page = 1, limit = 20, search = '' }) {
 }
 
 async function getCatalog({ page = 1, limit = 20, search = '' }) {
+    
+    
     const url = buildApiUrl({ page, limit, search });
     const headers = await getAxiosHeaders();
     console.log(`[getCatalog] URL: ${url}`);
@@ -82,7 +69,7 @@ async function getSeriesDetails(serieId) {
             id: `kisskh_${data.id}:${ep.id}`,
             title: ep.title || `Episode ${ep.number}`,
             season: ep.season || 1,
-            episode: ep.number
+            episode: ep.episode || ep.number || 1
         }))
     };
 }
@@ -95,13 +82,10 @@ async function getVParam(serieId, episodeId) {
         console.log(`[getVParam] cache hit per ${cacheKey}`);
         return cached.value;
     }
-    
-const browser = await puppeteerExtra.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: findChromiumExecutable()
-});
-
+    const browser = await puppeteerExtra.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
     let vParam = null;
     try {
         const page = await browser.newPage();
@@ -168,12 +152,10 @@ async function getEpisodeStream(serieId, episodeId) {
         }
     }
 
-const browser = await puppeteerExtra.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: findChromiumExecutable()
-});
-
+    const browser = await puppeteerExtra.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
     let streamUrl = null;
     try {
         const page = await browser.newPage();
@@ -219,13 +201,10 @@ const browser = await puppeteerExtra.launch({
 
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     const epId = extractEpisodeNumericId(episodeId);
-    
-const browser = await puppeteerExtra.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: findChromiumExecutable()
-});
-
+    const browser = await puppeteerExtra.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
     let subApiUrl = null;
     try {
         const page = await browser.newPage();
@@ -274,21 +253,29 @@ const browser = await puppeteerExtra.launch({
                 }
             }
             if (!subtitleUrl) continue;
-            try {
-                const realResp = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
-                const realBuf = Buffer.from(realResp.data);
-                const realText = realBuf.toString('utf8').trim();
-                let text = null;
-                if (realText.startsWith('1') || realText.startsWith('WEBVTT')) {
-                    text = realText;
-                } else if (realBuf.length > 32) {
-                    text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
-                }
-                if (text) decodedSubs.push({ lang, text });
-            } catch (err) {
-                console.warn(`[WARN] [${lang}] Errore recupero sottotitolo:`, err.message);
-            }
+
+try {
+    const realResp = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
+    const realBuf = Buffer.from(realResp.data);
+    const realText = realBuf.toString('utf8').trim();
+
+    let text = null;
+
+    if (realText.startsWith('1') || realText.startsWith('WEBVTT')) {
+        // Testo già in chiaro: può essere SRT o VTT
+        text = decryptKisskhSubtitleFull(realText); // decifra righe codificate in base64, se presenti
+    } else if (realBuf.length > 32) {
+        // Sottotitolo criptato in binario (AES)
+        text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
+    }
+
+    if (text) decodedSubs.push({ lang, text });
+} catch (err) {
+    console.warn(`[WARN] [${lang}] Errore recupero sottotitolo:`, err.message);
+}
+
         }
+        
         await browser.close();
         return decodedSubs;
     } catch (err) {
