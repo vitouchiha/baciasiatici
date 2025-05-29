@@ -1,34 +1,42 @@
 FROM node:18-slim
 
-# Install dependencies for Puppeteer with additional packages for better browser emulation
+# Installa solo i pacchetti essenziali per Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
-    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf \
-    libxss1 libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 \
+    fonts-freefont-ttf \
     ca-certificates \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-# Add additional browser arguments to improve stealth
-ENV PUPPETEER_ARGS="--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-accelerated-2d-canvas --no-first-run --no-zygote --disable-gpu --hide-scrollbars --mute-audio"
+# Imposta variabili d'ambiente per Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    NODE_ENV=production \
+    CACHE_TTL=3600 \
+    ENABLE_GARBAGE_COLLECTION=true \
+    GC_INTERVAL=300000 \
+    CF_COOKIE_MAX_AGE=3600000 \
+    CF_MAX_RETRY=3 \
+    CF_RETRY_DELAY=5000
 
-# Create app directory
+# Crea directory app
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copia package.json e package-lock.json
 COPY package*.json ./
 
-# Install app dependencies
-RUN npm install
+# Installa dipendenze in modalità produzione
+RUN npm ci --only=production
 
-# Copy app source
+# Crea directory per i dati e aggiunge un cookie Cloudflare predefinito
+RUN mkdir -p /app/data
+RUN echo '{"cf_clearance":"placeholder_value","timestamp":0}' > /app/data/cf_cookie.json
+
+# Copia il codice sorgente
 COPY . .
 
-# Expose the port the app runs on
+# Espone la porta su cui gira l'app
 EXPOSE 3000
 
-# Command to run the app with increased memory limit
-CMD ["node", "--max-old-space-size=2048", "index.js"]
+# Avvia l'app con limiti di memoria e garbage collection abilitata
+CMD ["node", "--max-old-space-size=512", "--expose-gc", "index.js"]

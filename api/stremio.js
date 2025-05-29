@@ -7,7 +7,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.1.5',
+    version: '1.1.6',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [

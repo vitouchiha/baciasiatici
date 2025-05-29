@@ -1,3 +1,22 @@
+// Abilita la garbage collection manuale se l'app viene avviata con --expose-gc
+if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
+  try {
+    global.gc = global.gc || require('vm').runInNewContext('gc');
+    console.log('[Memory] Garbage collection manuale abilitata');
+    
+    // Esegui garbage collection periodicamente
+    const gcInterval = parseInt(process.env.GC_INTERVAL || '300000', 10); // Default 5 minuti
+    setInterval(() => {
+      const before = process.memoryUsage().heapUsed / 1024 / 1024;
+      global.gc();
+      const after = process.memoryUsage().heapUsed / 1024 / 1024;
+      console.log(`[Memory] Garbage collection eseguita: ${before.toFixed(2)} MB -> ${after.toFixed(2)} MB (liberati ${(before - after).toFixed(2)} MB)`);
+    }, gcInterval);
+  } catch (e) {
+    console.warn('[Memory] Impossibile abilitare la garbage collection manuale:', e.message);
+  }
+}
+
 const express = require('express');
 const cors = require('cors');
 const app = express();
