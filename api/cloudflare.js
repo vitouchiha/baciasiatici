@@ -147,10 +147,10 @@ async function fetchCloudflareCookie() {
         // Set default timeout
         page.setDefaultNavigationTimeout(90000);
         
-        console.log('[Cloudflare] Navigating to kisskh.co...');
+        console.log('[Cloudflare] Navigating to API endpoint...');
         
         // Navigate to the site
-        await page.goto('https://kisskh.co', { 
+        await page.goto('https://kisskh.co/Explore?status=2&order=1&country=2&type=1', {  
             waitUntil: 'networkidle2', 
             timeout: 90000 
         });
