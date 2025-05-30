@@ -53,27 +53,6 @@ function decodeHtmlEntities(text) {
         .replace(/&gt;/g, '>');
 }
 
-function convertVTTtoSRT(vttContent) {
-    // Remove VTT header and metadata
-    vttContent = vttContent.replace(/^WEBVTT[\s\S]*?\n\n/, '');
-    vttContent = vttContent.replace(/^NOTE[\s\S]*?\n\n/g, '');
-    
-    // Convert timestamps (HH:MM:SS.mmm -> HH:MM:SS,mmm)
-    vttContent = vttContent.replace(
-        /(\d{2}:\d{2}:\d{2})\.(\d{3})/g, 
-        '$1,$2'
-    );
-    
-    // Add sequence numbers and ensure double newlines
-    let counter = 1;
-    return vttContent
-        .replace(/\n\n+/g, '\n\n')
-        .replace(
-            /(\d{2}:\d{2}:\d{2},\d{3}.*?\n.*?)(\n|$)/g, 
-            (match, p1) => `${counter++}\n${p1}\n\n`
-        );
-}
-
 module.exports = { 
     decryptKisskhSubtitleFull,
     decodeHtmlEntities,
