@@ -7,7 +7,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.1.8',
+    version: '1.1.7',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
@@ -499,23 +499,25 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 builder.defineSubtitlesHandler(async ({ type, id }) => {
-    console.log(`[SubtitlesHandler] Request subtitles for id=${id}`);
-    if (type !== 'series') return { subtitles: [] };
-
-    const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
-    if (!seriesId || !episodeId) return { subtitles: [] };
-
     try {
-        const subtitles = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
+        const subtitles = await kisskh.getSubtitles(id);
+        
+        // Check if client is Android
+        const isAndroid = headers && headers['user-agent'] && 
+                         headers['user-agent'].includes('Android');
+        
         return {
             subtitles: subtitles.map(sub => ({
-                id: `${id}:${sub.lang}`,
+                id: sub.id,
+                url: isAndroid ? 
+                    `data:text/srt;base64,${Buffer.from(convertVTTtoSRT(sub.content)).toString('base64')}` :
+                    `data:text/vtt;base64,${Buffer.from(sub.content).toString('base64')}`,
                 lang: sub.lang,
-                url: `data:text/vtt;base64,${Buffer.from(sub.text).toString('base64')}`
+                label: sub.label
             }))
         };
     } catch (e) {
-        console.error(`[SubtitlesHandler] Subtitle error:`, e.stack || e.message);
+        console.error('[SubtitlesHandler] Error:', e);
         return { subtitles: [] };
     }
 });
