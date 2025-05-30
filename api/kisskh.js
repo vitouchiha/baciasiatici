@@ -284,6 +284,30 @@ try {
         return [];
     }
 }
+async function getSubtitles(episodeId) {
+    try {
+        const [seriesId, epId] = episodeId.split(':');
+        const numericEpId = extractEpisodeNumericId(epId);
+        
+        const url = `https://kisskh.co/api/Drama/Episode/${numericEpId}`;
+        const headers = await getAxiosHeaders();
+        
+        console.log(`[getSubtitles] Fetching subtitles for episode ${episodeId}`);
+        const { data } = await axios.get(url, { headers });
+        
+        if (!data || !data.subtitles) return [];
+        
+        return data.subtitles.map(sub => ({
+            id: sub.id,
+            lang: sub.language || 'en',
+            label: sub.language || 'English',
+            content: decryptKisskhSubtitleFull(sub.url)
+        }));
+    } catch (error) {
+        console.error('[getSubtitles] Error:', error.message);
+        return [];
+    }
+}
 
 module.exports = {
     getCatalog,
@@ -291,5 +315,6 @@ module.exports = {
     getEpisodeStream,
     getVParam,
     getEpisodeNumber,
-    getSubtitlesWithPuppeteer
+    getSubtitlesWithPuppeteer,
+    getSubtitles
 };
