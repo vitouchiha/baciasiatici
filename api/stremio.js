@@ -7,7 +7,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.1.7',
+    version: '1.1.8',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
@@ -511,7 +511,7 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             subtitles: subtitles.map(sub => ({
                 id: `${id}:${sub.lang}`,
                 lang: sub.lang,
-                url: `data:text/vtt;base64,${Buffer.from(sub.text).toString('base64')}`
+                url: `data:text/srt;base64,${Buffer.from(vttToSrt(sub.text)).toString('base64')}`
             }))
         };
     } catch (e) {
@@ -519,5 +519,20 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         return { subtitles: [] };
     }
 });
+
+// Add this helper function to convert VTT to SRT
+function vttToSrt(vttText) {
+    // Remove WEBVTT header
+    let srt = vttText.replace(/^WEBVTT[\s\S]*?\n\n/, '');
+    
+    // Convert timestamps (00:00:00.000 --> 00:00:00.000)
+    srt = srt.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$1');
+    
+    // Add sequential numbers for each subtitle block
+    let counter = 1;
+    srt = srt.replace(/\n\n/g, () => `\n${counter++}\n`);
+    
+    return srt;
+}
 
 module.exports = builder.getInterface();
