@@ -240,11 +240,24 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
             await browser.close();
             return [];
         }
+
+        // Filtra solo i sottotitoli in italiano
+        arr = arr.filter(s => {
+            const lang = (s.land || s.label || '').toLowerCase();
+            return lang === 'it' || lang === 'italian';
+        });
+
+        if (arr.length === 0) {
+            console.warn('[WARN] Nessun sottotitolo italiano trovato');
+            await browser.close();
+            return [];
+        }
+
         const decodedSubs = [];
         const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
         const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
+
         for (const s of arr) {
-            let lang = (s.land || s.label || 'unknown').toLowerCase();
             let subtitleUrl = s.src;
             if (!subtitleUrl && s.GET && s.GET.host && s.GET.filename) {
                 subtitleUrl = `${s.GET.scheme || 'https'}://${s.GET.host}${s.GET.filename}`;
@@ -254,28 +267,36 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
             }
             if (!subtitleUrl) continue;
 
-try {
-    const realResp = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
-    const realBuf = Buffer.from(realResp.data);
-    const realText = realBuf.toString('utf8').trim();
+            // Facoltativo: mantieni il filtro sugli URL italiani per sicurezza
+            const allowedPattern = /^https?:\/\/auto\.streamsub\.top\/.*\.it\.(srt|txt1)$/i;
+            if (!allowedPattern.test(subtitleUrl)) {
+                console.log('[FILTER] Scartato endpoint non valido:', subtitleUrl);
+                continue;
+            } else {
+                console.log('[FILTER] Endpoint accettato:', subtitleUrl);
+            }
 
-    let text = null;
+            try {
+                const realResp = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
+                const realBuf = Buffer.from(realResp.data);
+                const realText = realBuf.toString('utf8').trim();
 
-    if (realText.startsWith('1') || realText.startsWith('WEBVTT')) {
-        // Testo già in chiaro: può essere SRT o VTT
-        text = decryptKisskhSubtitleFull(realText); // decifra righe codificate in base64, se presenti
-    } else if (realBuf.length > 32) {
-        // Sottotitolo criptato in binario (AES)
-        text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
-    }
+                let text = null;
 
-    if (text) decodedSubs.push({ lang, text });
-} catch (err) {
-    console.warn(`[WARN] [${lang}] Errore recupero sottotitolo:`, err.message);
-}
+                if (realText.startsWith('1') || realText.startsWith('WEBVTT')) {
+                    text = decryptKisskhSubtitleFull(realText);
+                } else if (realBuf.length > 32) {
+                    text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
+                }
 
+                if (text) {
+                    decodedSubs.push({ text });
+                }
+            } catch (err) {
+                console.warn('[WARN] Errore recupero sottotitolo:', err.message);
+            }
         }
-        
+
         await browser.close();
         return decodedSubs;
     } catch (err) {
@@ -284,6 +305,8 @@ try {
         return [];
     }
 }
+
+
 
 module.exports = {
     getCatalog,
