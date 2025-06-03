@@ -5,6 +5,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
 const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./sub_decrypter');
 
+
 let vCache = new Map();
 
 function extractEpisodeNumericId(episodeId) {
@@ -36,8 +37,8 @@ function buildApiUrl({ page = 1, limit = 20, search = '' }) {
 }
 
 async function getCatalog({ page = 1, limit = 20, search = '' }) {
-    
-    
+
+
     const url = buildApiUrl({ page, limit, search });
     const headers = await getAxiosHeaders();
     console.log(`[getCatalog] URL: ${url}`);
@@ -288,9 +289,15 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 } else if (realBuf.length > 32) {
                     text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
                 }
+                // Dopo aver decrittato il testo
+                console.log('[DEBUG] Sottotitolo decrittato:', text.substring(0, 200)); // Mostra i primi 200 caratteri
+                // Nella funzione getSubtitlesWithPuppeteer, modifica la parte dove aggiungi i sottotitoli decodificati:
 
                 if (text) {
-                    decodedSubs.push({ text });
+                    decodedSubs.push({
+                        text,
+                        lang: 'it' // Aggiungi il campo lang per i sottotitoli italiani
+                    });
                 }
             } catch (err) {
                 console.warn('[WARN] Errore recupero sottotitolo:', err.message);

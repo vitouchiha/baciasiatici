@@ -7,7 +7,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.1.9',
+    version: '1.2.0',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
@@ -56,22 +56,22 @@ async function extractStreamFromIframe(page) {
             const src = await iframe.evaluate(el => el.src);
             if (src && (src.includes('player') || src.includes('embed'))) {
                 console.log(`[extractStreamFromIframe] Found iframe with src: ${src}`);
-                
+
                 // Navigate to iframe source
                 const iframePage = await page.browser().newPage();
                 await iframePage.goto(src, { waitUntil: 'networkidle2', timeout: 30000 });
-                
+
                 // Look for stream URLs in iframe page
                 const iframeContent = await iframePage.content();
                 const streamMatches = iframeContent.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*|https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/g);
-                
+
                 if (streamMatches && streamMatches.length > 0) {
                     const streamUrl = streamMatches[0];
                     console.log(`[extractStreamFromIframe] Found stream in iframe: ${streamUrl}`);
                     await iframePage.close();
                     return streamUrl;
                 }
-                
+
                 // Try to extract from network requests
                 let iframeStreamUrl = null;
                 iframePage.on('request', request => {
@@ -81,16 +81,16 @@ async function extractStreamFromIframe(page) {
                         iframeStreamUrl = url;
                     }
                 });
-                
+
                 // Try clicking play button in iframe
                 try {
                     const playButtons = [
-                        '.jw-icon-playback', '.vjs-big-play-button', 
+                        '.jw-icon-playback', '.vjs-big-play-button',
                         '.play-button', '[aria-label="Play"]',
                         '.ytp-large-play-button', '.play-icon',
                         'button[title="Play"]', '.plyr__control--play'
                     ];
-                    
+
                     for (const selector of playButtons) {
                         const playButton = await iframePage.$(selector);
                         if (playButton) {
@@ -104,11 +104,11 @@ async function extractStreamFromIframe(page) {
                 } catch (e) {
                     console.log('[extractStreamFromIframe] Error clicking play in iframe:', e.message);
                 }
-                
+
                 // Replace waitForTimeout with setTimeout wrapped in a Promise
                 await new Promise(resolve => setTimeout(resolve, 5000));
                 await iframePage.close();
-                
+
                 if (iframeStreamUrl) return iframeStreamUrl;
             }
         }
@@ -128,24 +128,24 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
         }
     }
 
-    const browser = await puppeteerExtra.launch({ 
-        headless: true, 
+    const browser = await puppeteerExtra.launch({
+        headless: true,
         args: [
-            '--no-sandbox', 
+            '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-web-security',
             '--disable-features=IsolateOrigins,site-per-process'
-        ] 
+        ]
     });
     let streamUrl = null;
 
     try {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
-        
+
         // Enable request interception
         await page.setRequestInterception(true);
-        
+
         // Set up request handler
         page.on('request', request => {
             // Block image and font requests to speed up loading
@@ -177,31 +177,31 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
         } else {
             epId = episodeId;
         }
-        
+
         const targetUrl = `https://kisskh.co/Drama/Any/Episode-Any?id=${seriesId}&ep=${epId}`;
         console.log(`[resolveEpisodeStreamUrl] Navigating to ${targetUrl}`);
 
         // Track all network requests for stream URLs
         page.on('response', async response => {
             if (streamUrl) return; // Already found a stream
-            
+
             const url = response.url();
             const contentType = response.headers()['content-type'] || '';
-            
+
             // Direct stream URLs
             if (url.includes('.m3u8') || url.includes('.mp4')) {
                 console.log(`[resolveEpisodeStreamUrl] Direct stream found: ${url}`);
                 streamUrl = url;
                 return;
             }
-            
+
             // API responses that might contain stream info
-            if ((url.includes('/api/DramaList/') || url.includes('/api/Drama/')) && 
+            if ((url.includes('/api/DramaList/') || url.includes('/api/Drama/')) &&
                 contentType.includes('application/json')) {
                 try {
                     const text = await response.text();
                     const data = JSON.parse(text);
-                    
+
                     // Check various possible fields for stream URLs
                     const possibleFields = ['Video', 'video', 'stream', 'url', 'src', 'source', 'file'];
                     for (const field of possibleFields) {
@@ -214,7 +214,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
                             }
                         }
                     }
-                    
+
                     // Check for nested sources array
                     if (data && data.sources && Array.isArray(data.sources)) {
                         for (const source of data.sources) {
@@ -233,22 +233,22 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
 
         // Navigate to the page
         await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        
+
         // Wait for content to load - replace waitForTimeout with setTimeout wrapped in a Promise
         await new Promise(resolve => setTimeout(resolve, 8000));
-        
+
         // If no stream found yet, try direct API call
         if (!streamUrl) {
             try {
                 // Try to make a direct API call to get the stream
                 const apiUrl = `https://kisskh.co/api/DramaList/Episode/${epId}.png?err=false&ts=null&time=null`;
                 console.log(`[resolveEpisodeStreamUrl] Trying direct API call: ${apiUrl}`);
-                
+
                 const apiResponse = await page.evaluate(async (url) => {
                     const response = await fetch(url);
                     return await response.text();
                 }, apiUrl);
-                
+
                 try {
                     const apiData = JSON.parse(apiResponse);
                     if (apiData && apiData.Video) {
@@ -262,18 +262,18 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
                 console.log('[resolveEpisodeStreamUrl] Error with direct API call:', e.message);
             }
         }
-        
+
         // If still no stream, try to click play button
         if (!streamUrl) {
             try {
                 const playButtonSelectors = [
-                    '.jw-icon-playback', '.vjs-big-play-button', 
+                    '.jw-icon-playback', '.vjs-big-play-button',
                     '.play-button', '[aria-label="Play"]',
                     '.ytp-large-play-button', '.play-icon',
                     'button[title="Play"]', '.plyr__control--play',
                     '.btn-play', '#play-button'
                 ];
-                
+
                 for (const selector of playButtonSelectors) {
                     const playButton = await page.$(selector);
                     if (playButton) {
@@ -288,16 +288,16 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
                 console.log('[resolveEpisodeStreamUrl] Error clicking play button:', e.message);
             }
         }
-        
+
         // If still no stream, try to extract from iframes
         if (!streamUrl) {
             streamUrl = await extractStreamFromIframe(page);
         }
-        
+
         // If still no stream, try to extract from page content
         if (!streamUrl) {
             const pageContent = await page.content();
-            
+
             // Look for m3u8 or mp4 URLs
             const streamMatches = pageContent.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*|https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/g);
             if (streamMatches && streamMatches.length > 0) {
@@ -312,7 +312,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
                         let configStr = jwPlayerMatch[1].replace(/'/g, '"');
                         // Handle trailing commas which are invalid in JSON
                         configStr = configStr.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-                        
+
                         // Try to parse as JSON
                         const config = JSON.parse(configStr);
                         if (config.file) {
@@ -421,7 +421,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[StreamHandler] Request stream for id=${id}`);
     if (type !== 'series') return { streams: [] };
-    
+
     if (!id.includes(':')) {
         console.log(`[StreamHandler] Generic request for ${id} (no episode selected)`);
         return {
@@ -507,32 +507,43 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
 
     try {
         const subtitles = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
-        return {
-            subtitles: subtitles.map(sub => ({
+        const convertedSubtitles = subtitles.map(sub => {
+            const converted = vttToSrt(sub.text);
+            console.log('[DEBUG] Sottotitolo originale:', sub.text.substring(0, 100));
+            console.log('[DEBUG] Sottotitolo convertito:', converted.substring(0, 100));
+            return {
                 id: `${id}:${sub.lang}`,
                 lang: sub.lang,
-                url: `data:text/srt;base64,${Buffer.from(vttToSrt(sub.text)).toString('base64')}`
-            }))
-        };
+                url: `data:text/srt;base64,${Buffer.from(converted).toString('base64')}`
+            };
+        });
+
+        return { subtitles: convertedSubtitles };
     } catch (e) {
         console.error(`[SubtitlesHandler] Subtitle error:`, e.stack || e.message);
         return { subtitles: [] };
     }
 });
 
-// Add this helper function to convert VTT to SRT
 function vttToSrt(vttText) {
+    // Se il testo inizia già con un numero, potrebbe essere già in formato SRT
+    if (/^\d+\s*\n\d{2}:\d{2}:\d{2},\d{3}\s*-->/.test(vttText)) {
+        // console.log('[vttToSrt] Il testo è già in formato SRT, lo restituisco così com'è');
+        return vttText;
+    }
+
     // Remove WEBVTT header
     let srt = vttText.replace(/^WEBVTT[\s\S]*?\n\n/, '');
-    
+
     // Convert timestamps (00:00:00.000 --> 00:00:00.000)
-    srt = srt.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$1');
-    
+    srt = srt.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2');
+
     // Add sequential numbers for each subtitle block
     let counter = 1;
     srt = srt.replace(/\n\n/g, () => `\n${counter++}\n`);
-    
+
     return srt;
 }
+
 
 module.exports = builder.getInterface();

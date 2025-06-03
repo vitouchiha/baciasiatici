@@ -44,6 +44,19 @@ function decryptKisskhSubtitleFull(srtText) {
     return text;
 }
 
+function decryptKisskhSubtitleStatic(buffer, key, iv) {
+    try {
+        const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+        decipher.setAutoPadding(true);
+        let decrypted = decipher.update(buffer);
+        decrypted = Buffer.concat([decrypted, decipher.final()]);
+        return decrypted.toString('utf8');
+    } catch (e) {
+        console.error('[decryptKisskhSubtitleStatic] Errore:', e.message);
+        return null;
+    }
+}
+
 function decodeHtmlEntities(text) {
     return text
         .replace(/&#(\d+);/g, (m, code) => String.fromCharCode(code))
@@ -55,6 +68,7 @@ function decodeHtmlEntities(text) {
 
 module.exports = { 
     decryptKisskhSubtitleFull,
+    decryptKisskhSubtitleStatic,
     decodeHtmlEntities,
     };
 

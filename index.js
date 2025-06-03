@@ -24,6 +24,10 @@ const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
 const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
+const path = require('path');
+
+// Espone la cartella data
+app.use('/data', express.static(path.join(__dirname, 'data')));
 
 app.use(cors());
 
