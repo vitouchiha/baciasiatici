@@ -5,15 +5,23 @@ const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
 
+
+
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.2.0',
+    version: '1.2.1',
     name: 'KissKH Addon',
-    description: 'Asian content',
+    description: 'Asian content with episodes',
     resources: [
         { name: 'catalog', types: ['series'] },
         { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
-        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'], idPattern: 'kisskh_\\d+:\\d+' },
+        { 
+            name: 'stream', 
+            types: ['series'], 
+            idPrefixes: ['kisskh_'],
+            // ✅ IMPORTANTE: Pattern più specifico per evitare match generici
+            idPattern: 'kisskh_\\d+:\\d+'
+        },
         { name: 'subtitles', types: ['series'], idPrefixes: ['kisskh_'] }
     ],
     types: ['series'],
@@ -26,7 +34,14 @@ const builder = new addonBuilder({
             { name: 'skip', isRequired: false },
             { name: 'limit', isRequired: false }
         ]
-    }]
+    }],
+    // ✅ AGGIUNTA: Configurazione comportamento
+    behaviorHints: {
+        adult: false,
+        p2p: false,
+        configurable: false,
+        configurationRequired: false
+    }
 });
 
 const seriesDetailsCache = new Map();
@@ -364,11 +379,12 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     const seriesId = id.replace('kisskh_', '');
     let details;
+    
     try {
         details = await getCachedSeriesDetails(seriesId);
-        console.log('[MetaHandler] Details retrieved:', JSON.stringify(details, null, 2));
+        console.log(`[MetaHandler] Retrieved ${details?.episodes?.length || 0} episodes for series ${seriesId}`);
     } catch (e) {
-        console.error('[MetaHandler] Error in getSeriesDetails:', e.stack || e.message);
+        console.error('[MetaHandler] Error:', e.message);
         return {
             meta: {
                 id,
@@ -382,39 +398,54 @@ builder.defineMetaHandler(async ({ type, id }) => {
     }
 
     if (!details || !Array.isArray(details.episodes) || details.episodes.length === 0) {
-        console.warn('[MetaHandler] Incomplete details or missing episodes for', seriesId);
+        console.warn('[MetaHandler] No episodes found for', seriesId);
         return {
             meta: {
                 id,
                 type: 'series',
                 name: details?.title || 'Title not available',
-                description: 'Series details incomplete or missing.',
+                description: details?.description || 'Series details not available.',
                 poster: details?.thumbnail || '',
                 videos: []
             }
         };
     }
 
-    // Map episodes correctly
-    const videos = details.episodes.map(ep => ({
-        id: `${ep.id}`,
-        title: ep.title || `Episode ${ep.number}`,
-        season: ep.season || 1,
-        episode: ep.episode || ep.number || 1
-    }));
+    // ✅ CORREZIONE: Assicurati che gli ID degli episodi siano corretti
+    const videos = details.episodes.map(ep => {
+        const episodeId = `kisskh_${details.id}:${ep.id.toString().replace(/^kisskh_\d+:/, '')}`;
+        console.log(`[MetaHandler] Mapping episode: ${ep.id} -> ${episodeId}`);
+        
+        return {
+            id: episodeId,
+            title: ep.title || `Episode ${ep.episode || ep.number || 1}`,
+            season: ep.season || 1,
+            episode: ep.episode || ep.number || 1,
+            // ✅ AGGIUNTA: Informazioni aggiuntive per il debug
+            description: `Episode ${ep.episode || ep.number || 1}`,
+            released: details.releaseDate
+        };
+    });
 
     const meta = {
         id: `kisskh_${details.id}`,
         type: 'series',
-        name: details.title || '',
+        name: details.title || 'Unknown Title',
         poster: details.thumbnail || '',
         background: details.thumbnail || '',
         posterShape: 'poster',
-        description: (details.description || '').replace(/\r?\n+/g, ' ').trim(),
+        description: (details.description || 'No description available').replace(/\r?\n+/g, ' ').trim(),
         releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
+        runtime: '45 min', // ✅ AGGIUNTA: Runtime tipico per le serie
+        genre: ['Drama', 'Asian'], // ✅ AGGIUNTA: Generi
         videos,
+        // ✅ AGGIUNTA: Comportamenti per migliorare l'UX
+        behaviorHints: {
+            defaultVideoId: videos.length > 0 ? videos[0].id : undefined
+        }
     };
 
+    console.log(`[MetaHandler] Returning meta with ${videos.length} episodes`);
     return { meta };
 });
 
@@ -422,44 +453,47 @@ builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[StreamHandler] Request stream for id=${id}`);
     if (type !== 'series') return { streams: [] };
 
+    // ✅ CORREZIONE PRINCIPALE: Gestisci correttamente le richieste generiche
     if (!id.includes(':')) {
-        console.log(`[StreamHandler] Generic request for ${id} (no episode selected)`);
+        console.log(`[StreamHandler] Generic request for ${id} - returning placeholder`);
         return {
             streams: [{
-                title: '🔍 Select an episode to see the stream',
-                url: 'https://stremio.com', // Dummy but valid URL
+                title: '📺 Select an episode to watch',
+                description: 'Choose an episode from the series to start streaming',
+                url: '#', // URL placeholder che non causa problemi
                 isFree: true,
                 behaviorHints: {
                     notWebReady: true,
-                    catalogNotSelectable: true
+                    proxyHeaders: {
+                        request: {},
+                        response: {}
+                    }
                 }
             }]
         };
     }
+    
 
     // Robust ID parsing
     let seriesId, episodeId;
     if (id.startsWith('kisskh_')) {
         const parts = id.split(':');
         if (parts.length === 2) {
-            // Normal case: "kisskh_123:456"
             seriesId = parts[0].replace('kisskh_', '');
             episodeId = parts[1];
         } else if (parts.length === 3) {
-            // Anomalous case: "kisskh_123:kisskh_123:456"
             seriesId = parts[0].replace('kisskh_', '');
             episodeId = parts[2];
         } else {
-            // Fallback
             seriesId = id.replace('kisskh_', '').split(':')[0];
             episodeId = id.split(':').pop();
         }
     } else {
-        // Fallback for ID without prefix
         seriesId = id.split(':')[0];
         episodeId = id.split(':').pop();
     }
-    console.log(`[StreamHandler] seriesId=${seriesId} episodeId=${episodeId}`);
+
+    console.log(`[StreamHandler] Richiesta stream specifica: seriesId=${seriesId} episodeId=${episodeId}`);
 
     try {
         const streamUrl = await resolveEpisodeStreamUrl(seriesId, episodeId);
@@ -467,10 +501,13 @@ builder.defineStreamHandler(async ({ type, id }) => {
         if (!streamUrl) {
             return {
                 streams: [{
-                    title: '⏳ No stream found. Try again later.',
-                    url: '',
+                    title: '⏳ Stream non disponibile al momento',
+                    url: 'https://example.com/placeholder', // URL placeholder valido
                     isFree: true,
-                    behaviorHints: { notWebReady: true }
+                    behaviorHints: { 
+                        notWebReady: true,
+                        bingeGroup: 'kisskh-unavailable'
+                    }
                 }]
             };
         }
@@ -478,21 +515,27 @@ builder.defineStreamHandler(async ({ type, id }) => {
         const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';
         return {
             streams: [{
-                title: '▶️ Episode Stream',
+                title: '▶️ Riproduci Episodio',
                 url: streamUrl,
                 isFree: true,
                 format,
-                behaviorHints: { notWebReady: false }
+                behaviorHints: { 
+                    notWebReady: false,
+                    bingeGroup: `kisskh-${seriesId}`
+                }
             }]
         };
     } catch (e) {
         console.error('[STREAM HANDLER ERROR]', e.stack || e.message);
         return {
             streams: [{
-                title: '❌ Error during loading',
-                url: '',
+                title: '❌ Errore nel caricamento',
+                url: 'https://example.com/error',
                 isFree: true,
-                behaviorHints: { notWebReady: true }
+                behaviorHints: { 
+                    notWebReady: true,
+                    bingeGroup: 'kisskh-error'
+                }
             }]
         };
     }

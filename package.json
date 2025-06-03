@@ -1,6 +1,6 @@
 {
   "name": "kisskh-stremio-addon",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "KissKH Stremio Addon",
   "main": "index.js",
   "scripts": {
