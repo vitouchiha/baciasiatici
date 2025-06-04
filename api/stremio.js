@@ -9,7 +9,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.2.1',
+    version: '1.2.4', // Incrementare la versione
     name: 'KissKH Addon',
     description: 'Asian content with episodes',
     resources: [
@@ -19,8 +19,8 @@ const builder = new addonBuilder({
             name: 'stream', 
             types: ['series'], 
             idPrefixes: ['kisskh_'],
-            // ✅ IMPORTANTE: Pattern più specifico per evitare match generici
-            idPattern: 'kisskh_\\d+:\\d+'
+            // Rendere il pattern ancora più specifico
+            idPattern: 'kisskh_\d+:\d+'
         },
         { name: 'subtitles', types: ['series'], idPrefixes: ['kisskh_'] }
     ],
@@ -35,12 +35,14 @@ const builder = new addonBuilder({
             { name: 'limit', isRequired: false }
         ]
     }],
-    // ✅ AGGIUNTA: Configurazione comportamento
+    // Modificare behaviorHints per forzare il comportamento corretto
     behaviorHints: {
         adult: false,
         p2p: false,
         configurable: false,
-        configurationRequired: false
+        configurationRequired: false,
+        // Aggiungere questa opzione per forzare la visualizzazione dei metadati prima
+        hasEpisodes: true
     }
 });
 
@@ -439,9 +441,9 @@ builder.defineMetaHandler(async ({ type, id }) => {
         runtime: '45 min', // ✅ AGGIUNTA: Runtime tipico per le serie
         genre: ['Drama', 'Asian'], // ✅ AGGIUNTA: Generi
         videos,
-        // ✅ AGGIUNTA: Comportamenti per migliorare l'UX
+        // ✅ MODIFICA: Semplificare behaviorHints per ATV 1.6.12
         behaviorHints: {
-            defaultVideoId: videos.length > 0 ? videos[0].id : undefined
+            // Rimuovere defaultVideoId che potrebbe causare problemi
         }
     };
 
@@ -455,22 +457,9 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
     // ✅ CORREZIONE PRINCIPALE: Gestisci correttamente le richieste generiche
     if (!id.includes(':')) {
-        console.log(`[StreamHandler] Generic request for ${id} - returning placeholder`);
-        return {
-            streams: [{
-                title: '📺 Select an episode to watch',
-                description: 'Choose an episode from the series to start streaming',
-                url: '#', // URL placeholder che non causa problemi
-                isFree: true,
-                behaviorHints: {
-                    notWebReady: true,
-                    proxyHeaders: {
-                        request: {},
-                        response: {}
-                    }
-                }
-            }]
-        };
+        console.log(`[StreamHandler] Generic request for ${id} - returning empty streams`);
+        // Per ATV 1.6.12, restituire un array vuoto è più sicuro
+        return { streams: [] };
     }
     
 
@@ -519,9 +508,10 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 url: streamUrl,
                 isFree: true,
                 format,
+                // Semplificare behaviorHints
                 behaviorHints: { 
-                    notWebReady: false,
-                    bingeGroup: `kisskh-${seriesId}`
+                    notWebReady: false
+                    // Rimuovere bingeGroup che potrebbe causare problemi
                 }
             }]
         };

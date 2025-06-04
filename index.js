@@ -57,22 +57,8 @@ app.get('/:resource/:type/:id.json', async (req, res) => {
     try {
         // ✅ CORREZIONE: Gestisci le richieste stream generiche PRIMA di chiamare l'interfaccia
         if (resource === 'stream' && type === 'series' && !id.includes(':')) {
-            console.log(`[BLOCK] Richiesta stream generica per ${id} - restituisco placeholder`);
-            return res.json({
-                streams: [{
-                    title: '📺 Select an episode to watch',
-                    description: 'Choose an episode from the series to start streaming',
-                    url: '#',
-                    isFree: true,
-                    behaviorHints: {
-                        notWebReady: true,
-                        proxyHeaders: {
-                            request: {},
-                            response: {}
-                        }
-                    }
-                }]
-            });
+            console.log(`[BLOCK] Richiesta stream generica per ${id} - restituisco array vuoto`);
+            return res.json({ streams: [] });
         }
 
         // ✅ CORREZIONE: Usa addonInterface invece di stremioInterface
