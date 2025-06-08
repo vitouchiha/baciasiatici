@@ -32,9 +32,8 @@ app.use('/data', express.static(path.join(__dirname, 'data')));
 app.use(cors());
 
 app.get('/manifest.json', (req, res) => {
-    console.log('[Endpoint] GET /manifest.json');
     res.setHeader('Content-Type', 'application/json');
-    res.json(addonInterface.manifest); // Usa addonInterface, non stremioInterface
+    res.send(stremioInterface.manifest);
 });
 
 /*
@@ -46,31 +45,32 @@ app.get('/manifest.json', (req, res) => {
 
 });
 */
-
-
+// 🔍 Risorse catalog/meta/stream
 app.get('/:resource/:type/:id.json', async (req, res) => {
-    const { resource, type, id } = req.params;
-    const extra = req.query;
+  const { resource, type, id } = req.params;
+  const extra = req.query;
 
-    console.log(`[Endpoint] GET /${resource}/${type}/${id}`, { extra });
+  console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+
+  if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+        console.log(`[BLOCK] Stream generico bloccato per ${id}`);
+        return res.json({
+            streams: [{
+                title: 'Seleziona un episodio',
+                url: 'https://stremio.com',
+                isFree: true,
+                behaviorHints: { notWebReady: true, catalogNotSelectable: true }
+            }]
+        });
+    }
 
     try {
-        // ✅ CORREZIONE: Gestisci le richieste stream generiche PRIMA di chiamare l'interfaccia
-        if (resource === 'stream' && type === 'series' && !id.includes(':')) {
-            console.log(`[BLOCK] Richiesta stream generica per ${id} - restituisco array vuoto`);
-            return res.json({ streams: [] });
-        }
-
-        // ✅ CORREZIONE: Usa addonInterface invece di stremioInterface
-        const out = await addonInterface.get({ resource, type, id, extra });
+        const out = await stremioInterface.get({ resource, type, id, extra });
         res.setHeader('Content-Type', 'application/json');
         res.send(out);
     } catch (err) {
-        console.error('[ERROR]', err.message, err.stack);
-        res.status(500).json({ 
-            error: err.message,
-            streams: resource === 'stream' ? [] : undefined 
-        });
+        console.error('[ERROR]', err.message);
+        res.status(500).send({ error: err.message });
     }
 });
 
