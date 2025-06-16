@@ -4,7 +4,7 @@ services:
     build: .
     container_name: baciasiatici
     ports:
-      - "5000:5000"
+      - "3000:3000"
     env_file:
       - .env
     restart: unless-stopped
