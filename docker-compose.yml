@@ -2,7 +2,7 @@ version: '3.8'
 services:
   baciasiatici-addon:
     build: .
-    container_name: baciasiatici
+    container_name: kisfromasia
     ports:
       - "3000:3000"
     env_file:
