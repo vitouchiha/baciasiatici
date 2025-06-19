@@ -231,7 +231,7 @@ app.use('/',  (req, res) => getRouter(builder)(req, res));
 app.use('/', serveHTTP(addonInterface));
 
 // Avvio del server
-const PORT = process.env.PORT || 7000; // Porta di default per sviluppo locale
+const PORT = process.env.PORT || 3000; // Porta di default per sviluppo locale
 
 if (process.env.VERCEL) {
     // Se deployato su Vercel, Vercel gestisce l'avvio del server.
