@@ -1,15 +1,29 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const kisskh = require('./kisskh');
 const { getCloudflareCookie } = require('./cloudflare');
+const { decryptKisskhSubtitleFull } = require('./sub_decrypter');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const axios = require('axios');
 const cache = require('../middlewares/cache');
 const path = require('path');
 puppeteerExtra.use(StealthPlugin());
 
+// Funzione helper per ottenere gli headers
+async function getAxiosHeaders() {
+    const cfCookie = await getCloudflareCookie();
+    return {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://kisskh.co/',
+        'Origin': 'https://kisskh.co/',
+        'Cookie': cfCookie
+    };
+}
+
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.2.6',
+    version: '1.2.5',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
@@ -527,19 +541,30 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         console.log(`[subtitles] Fetching from ${subUrl}`);
         
         const { data: subtitleData } = await axios.get(subUrl, { headers });
-        if (!subtitleData || !subtitleData.length) return { subtitles: [] };
+        if (!subtitleData || !subtitleData.length) {
+            console.log(`[subtitles] No subtitles found at ${subUrl}`);
+            return { subtitles: [] };
+        }
+
+        console.log(`[subtitles] Found ${subtitleData.length} subtitle tracks`);
 
         // Process each subtitle
         const processedSubs = [];
         for (const sub of subtitleData) {
-            if (!sub.src) continue;
+            if (!sub.src) {
+                console.log(`[subtitles] Skipping subtitle without src`);
+                continue;
+            }
 
             try {
+                console.log(`[subtitles] Fetching subtitle content from ${sub.src}`);
                 const { data: encryptedContent } = await axios.get(sub.src, { headers });
+                console.log(`[subtitles] Decrypting subtitle content`);
                 const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
                 
                 // Save to cache
                 await cache.setSRT(id, decryptedContent);
+                console.log(`[subtitles] Saved to cache with key ${id}`);
                 
                 processedSubs.push({
                     id: `${id}_${sub.language || 'ko'}`,
@@ -552,6 +577,7 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             }
         }
 
+        console.log(`[subtitles] Successfully processed ${processedSubs.length} subtitles`);
         return { subtitles: processedSubs };
     } catch (error) {
         console.error(`[subtitles] Error: ${error.message}`);
