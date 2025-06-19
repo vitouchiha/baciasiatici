@@ -1,4 +1,4 @@
-const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
+const { addonBuilder, serveHTTP, getRouter } = require('stremio-addon-sdk');
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios'); // Assicurati sia nelle tue dipendenze
@@ -6,6 +6,8 @@ const LRU = require('lru-cache'); // Assicurati sia nelle tue dipendenze
 const fs = require('fs').promises; // Per operazioni asincrone sui file
 const fsSync = require('fs'); // Per operazioni sincrone (creazione cartella)
 const path = require('path');
+const stremio = require('./api/stremio'); // Importa l'implementazione dei gestori
+const kisskh = require('./api/kisskh');
 const crypto = require('crypto'); // Per generare nomi file unici
 
 const app = express();
@@ -119,6 +121,11 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// Integra i gestori dal file api/stremio.js
+builder.defineCatalogHandler(stremio.defineCatalogHandler);
+builder.defineMetaHandler(stremio.defineMetaHandler);
+builder.defineStreamHandler(stremio.defineStreamHandler);
+
 // *** IMPORTANTE: SOSTITUISCI QUESTA FUNZIONE CON LA TUA LOGICA REALE ***
 // Questa è una funzione placeholder. Devi implementare la logica per ottenere
 // i sottotitoli dalla tua fonte dati (KissKH).
@@ -131,14 +138,22 @@ async function getSubtitlesFromSource_actualLogic(type, id) {
     // ];
     // Se usi Puppeteer o altre logiche complesse, andranno qui.
     // Per ora, restituisce un array vuoto per evitare errori.
-    // Esempio con un URL di test (sostituiscilo!)
-    if (id === 'kkh_testmovie') { // Usa un ID di test
-        return [
-            { lang: 'Italian', url: 'https://cc.zorores.com/9d/0c/9d0c6c10a787386633730979a57a1d5b/ita-2.srt', id: 'it_test_1' },
-            { lang: 'English', url: 'https://cc.zorores.com/9d/0c/9d0c6c10a787386633730979a57a1d5b/eng-3.srt', id: 'en_test_1' }
-        ];
+    
+    if (type === 'series' && id.startsWith('kisskh_') && id.includes(':')) {
+        try {
+            const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
+            const subtitles = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
+
+            return subtitles.map(sub => ({
+                lang: 'Italian', // o gestisci dinamicamente se hai più lingue
+                url: `data:text/srt;base64,${Buffer.from(sub.text).toString('base64')}`,
+                id: `${id}:${sub.lang}` // Assicurati che l'ID sia unico
+            }));
+        } catch (e) {
+            console.error('Errore in getSubtitlesFromSource_actualLogic:', e);
+        }
     }
-    return [];
+    return []; // Ritorna un array vuoto in caso di errore o tipo non supportato
 }
 
 builder.defineSubtitlesHandler(async ({ type, id, config }) => {
@@ -210,12 +225,9 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     return Promise.resolve({ subtitles: finalSubtitles, cacheMaxAge: 3600 }); // Cache lista per 1 ora
 });
 
-// Aggiungi qui altri gestori (catalog, meta, stream) se non sono già definiti
-// builder.defineCatalogHandler(...)
-// builder.defineMetaHandler(...)
-// builder.defineStreamHandler(...)
-
-const addonInterface = builder.getInterface();
+//const addonInterface = builder.getInterface();
+//app.use('/', serveHTTP(addonInterface));
+app.use('/',  (req, res) => getRouter(builder)(req, res));
 app.use('/', serveHTTP(addonInterface));
 
 // Avvio del server
