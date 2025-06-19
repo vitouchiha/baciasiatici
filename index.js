@@ -225,10 +225,9 @@ builder.defineSubtitlesHandler(async ({ type, id, config }) => {
     return Promise.resolve({ subtitles: finalSubtitles, cacheMaxAge: 3600 }); // Cache lista per 1 ora
 });
 
-//const addonInterface = builder.getInterface();
-//app.use('/', serveHTTP(addonInterface));
-app.use('/',  (req, res) => getRouter(builder)(req, res));
+const addonInterface = builder.getInterface();
 app.use('/', serveHTTP(addonInterface));
+
 
 // Avvio del server
 const PORT = process.env.PORT || 3000; // Porta di default per sviluppo locale
