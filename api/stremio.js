@@ -3,6 +3,8 @@ const kisskh = require('./kisskh');
 const { getCloudflareCookie } = require('./cloudflare');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const cache = require('../middlewares/cache');
+const path = require('path');
 puppeteerExtra.use(StealthPlugin());
 
 const builder = new addonBuilder({
@@ -499,28 +501,60 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 builder.defineSubtitlesHandler(async ({ type, id }) => {
-    console.log(`[SubtitlesHandler] Request subtitles for id=${id}`);
-    if (type !== 'series') return { subtitles: [] };
-
-    const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
-    if (!seriesId || !episodeId) return { subtitles: [] };
-
+    console.log(`[subtitles] Request for ${type} ${id}`);
     try {
-        const subtitles = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
-        const convertedSubtitles = subtitles.map(sub => {
-            const converted = vttToSrt(sub.text);
-            console.log('[DEBUG] Sottotitolo originale:', sub.text.substring(0, 100));
-            console.log('[DEBUG] Sottotitolo convertito:', converted.substring(0, 100));
-            return {
-                id: `${id}:${sub.lang}`,
-                lang: sub.lang,
-                url: `data:text/srt;base64,${Buffer.from(converted).toString('base64')}`
-            };
-        });
+        // Check cache first
+        const cachedSubs = await cache.getSRT(id);
+        if (cachedSubs) {
+            console.log(`[subtitles] Cache hit for ${id}`);
+            return { subtitles: [{ 
+                id: `${id}_ko`,
+                url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
+                lang: 'ko' 
+            }]};
+        }
 
-        return { subtitles: convertedSubtitles };
-    } catch (e) {
-        console.error(`[SubtitlesHandler] Subtitle error:`, e.stack || e.message);
+        const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
+        const series = await getCachedSeriesDetails(seriesId);
+        if (!series) return { subtitles: [] };
+
+        const episode = series.episodes.find(ep => ep.id === id);
+        if (!episode) return { subtitles: [] };
+
+        // Get episode subtitles
+        const headers = await getAxiosHeaders();
+        const subUrl = `https://kisskh.co/api/DramaList/Episode/${episodeId}/Subtitle`;
+        console.log(`[subtitles] Fetching from ${subUrl}`);
+        
+        const { data: subtitleData } = await axios.get(subUrl, { headers });
+        if (!subtitleData || !subtitleData.length) return { subtitles: [] };
+
+        // Process each subtitle
+        const processedSubs = [];
+        for (const sub of subtitleData) {
+            if (!sub.src) continue;
+
+            try {
+                const { data: encryptedContent } = await axios.get(sub.src, { headers });
+                const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
+                
+                // Save to cache
+                await cache.setSRT(id, decryptedContent);
+                
+                processedSubs.push({
+                    id: `${id}_${sub.language || 'ko'}`,
+                    url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
+                    lang: sub.language || 'ko'
+                });
+            } catch (error) {
+                console.error(`[subtitles] Error processing subtitle: ${error.message}`);
+                continue;
+            }
+        }
+
+        return { subtitles: processedSubs };
+    } catch (error) {
+        console.error(`[subtitles] Error: ${error.message}`);
         return { subtitles: [] };
     }
 });
