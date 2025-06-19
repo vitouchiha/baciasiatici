@@ -90,14 +90,31 @@ app.get('/local-srt/:filename', async (req, res) => {
 // Carica il tuo manifest attuale. Potrebbe essere definito qui o caricato da un file.
 // Assicurati che i valori di 'name', 'version', 'description' corrispondano a package.json
 const manifest = {
-    "id": "org.kisskh.stremio-addon", // Mantieni il tuo ID
-    "version": "1.2.5", // Da package.json
-    "name": "KissKH Stremio Addon", // Da package.json
-    "description": "KissKH Stremio Addon", // Da package.json
-    "resources": ["catalog", "meta", "stream", "subtitles"],
-    "types": ["movie", "series"], // Adatta ai tipi supportati dal tuo addon
-    "idPrefixes": ["kkh_"], // Adatta se necessario
-    // Aggiungi qui altre proprietà del manifest se presenti (logo, background, etc.)
+    id: "org.kisskh.stremio-addon", // ID dal tuo index.js originale
+    version: "1.2.5",               // Da package.json
+    name: "KissKH Stremio Addon",    // Da package.json
+    description: "KissKH Stremio Addon", // Da package.json
+    types: ["series"], // Coerente con le risorse e i cataloghi definiti (come in api/stremio.js)
+    resources: [
+        { name: 'catalog', types: ['series'] },
+        { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
+        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'], idPattern: 'kisskh_\\d+:\\d+' }, // idPattern da api/stremio.js
+        { name: 'subtitles', types: ['series'], idPrefixes: ['kisskh_'] }
+    ],
+    catalogs: [{
+        type: 'series',
+        id: 'kisskh', // ID del catalogo, come in api/stremio.js
+        name: 'K-Drama',      // Nome del catalogo
+        extra: [ // 'extra' è importante per Stremio
+            { name: 'search', isRequired: false },
+            { name: 'skip', isRequired: false },
+            { name: 'limit', isRequired: false } // Come in api/stremio.js
+        ]
+    }],
+    // Esempi di altre proprietà utili del manifest (opzionali):
+    // "logo": "https://yourlogo.com/logo.png",
+    // "background": "https://yourbackground.com/background.png",
+    // "contactEmail": "your-email@example.com"
 };
 
 const builder = new addonBuilder(manifest);
