@@ -641,8 +641,9 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             return {
                 subtitles: cachedSubs.map(sub => {
                     const fileName = path.basename(sub.filePath);
-                    const subtitleUrl = `/subtitle/${fileName}`;
-                    console.log(`[subtitles] Serving cached subtitle at: ${subtitleUrl}`);
+                    // Usa sempre path relativo, il router si occuperà di renderlo assoluto
+                    const subtitleUrl = `./subtitle/${fileName}`;
+                    console.log(`[subtitles] Serving cached subtitle with path: ${subtitleUrl}`);
                     return {
                         id: `${id}_${sub.lang}`,
                         url: subtitleUrl,
@@ -679,8 +680,9 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
                         const filePath = await cache.setSRT(id, decryptedContent, 'it');
                         if (filePath) {
                             const fileName = path.basename(filePath);
-                            const subtitleUrl = `/subtitle/${fileName}`;
-                            console.log(`[subtitles] Salvato il file ${fileName} e generato URL: ${subtitleUrl}`);
+                            // Usa path relativo anche qui
+                            const subtitleUrl = `./subtitle/${fileName}`;
+                            console.log(`[subtitles] Salvato il file ${fileName} e generato path: ${subtitleUrl}`);
                             processedSubs.push({
                                 id: `${id}_it`,
                                 url: subtitleUrl,
@@ -703,8 +705,9 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
                 const filePath = await cache.setSRT(id, sub.text, 'it');
                 if (filePath) {
                     const fileName = path.basename(filePath);
-                    const subtitleUrl = `/subtitle/${fileName}`;
-                    console.log(`[subtitles] Salvato il file ${fileName} e generato URL: ${subtitleUrl}`);
+                    // Usa path relativo anche qui
+                    const subtitleUrl = `./subtitle/${fileName}`;
+                    console.log(`[subtitles] Salvato il file ${fileName} e generato path: ${subtitleUrl}`);
                     processedSubs.push({
                         id: `${id}_it`,
                         url: subtitleUrl,
