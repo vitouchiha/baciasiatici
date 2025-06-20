@@ -55,7 +55,9 @@ class Cache {
             console.error('Cache write error:', error);
             return false;
         }
-    }    async get(key) {
+    }
+
+    async get(key) {
         const cacheKey = this.getCacheKey(key);
         const filePath = path.join(this.cacheDir, cacheKey);
 
@@ -72,65 +74,44 @@ class Cache {
         } catch (error) {
             return null;
         }
-    }    async setSRT(key, content, lang) {
-        const cacheKey = this.getCacheKey(key);
-        const fileName = `${cacheKey}.${lang}.srt`;
-        const filePath = path.join(this.cacheDir, fileName);
+    }
+
+    async setSRT(key, content, lang) {
+        if (lang.toLowerCase() !== 'it') {
+            console.log(`[cache] Skipping non-Italian subtitle for key: ${key}`);
+            return null;
+        }
+
+        const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
+        const filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
 
         try {
-            // Verifica che la directory cache esista
-            await fs.access(this.cacheDir).catch(async () => {
-                console.log('[Cache] Directory cache non trovata, la creo:', this.cacheDir);
-                await fs.mkdir(this.cacheDir, { recursive: true });
-            });
-
-            // Verifica che il contenuto sia un SRT valido
-            if (!content || !content.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
-                console.error('[Cache] Contenuto SRT non valido:', content ? content.substring(0, 100) + '...' : 'vuoto');
-                return null;
-            }
-
-            // Normalizza i fine riga per evitare problemi di compatibilità
-            const normalizedContent = content.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
-            
-            // Salva il file
-            console.log(`[Cache] Salvataggio sottotitolo: ${fileName}`);
-            await fs.writeFile(filePath, normalizedContent);
-            
-            // Verifica che il file sia stato salvato correttamente
-            const stats = await fs.stat(filePath);
-            console.log(`[Cache] Sottotitolo salvato: ${fileName} (${(stats.size / 1024).toFixed(2)} KB)`);
-            
-            // Verifica che il file sia leggibile
-            const testRead = await fs.readFile(filePath, 'utf8');
-            if (!testRead || testRead.length === 0) {
-                throw new Error('File saved but not readable');
-            }
-
+            await fs.writeFile(filePath, content);
+            console.log(`[cache] Saved Italian subtitle: ${path.basename(filePath)}`);
             return filePath;
         } catch (error) {
-            console.error(`[Cache] Errore durante il salvataggio del sottotitolo ${fileName}:`, error);
-            // Prova a rimuovere il file se esiste
-            try {
-                await fs.unlink(filePath).catch(() => {});
-            } catch (e) {}
+            console.error('[cache] SRT write error:', error);
             return null;
         }
     }
 
     async getSRT(key, lang) {
-        const cacheKey = this.getCacheKey(key);
-        const filePath = path.join(this.cacheDir, `${cacheKey}.${lang}.srt`);
+        if (lang.toLowerCase() !== 'it') {
+            return null;
+        }
+
+        const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
+        const filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
 
         try {
-            const content = await fs.readFile(filePath, 'utf8');
             const stats = await fs.stat(filePath);
-
+            
             if (Date.now() - stats.mtime.getTime() > this.ttl) {
                 await fs.unlink(filePath);
                 return null;
             }
 
+            const content = await fs.readFile(filePath, 'utf8');
             return { content, filePath };
         } catch (error) {
             return null;
@@ -141,20 +122,23 @@ class Cache {
         try {
             const files = await fs.readdir(this.cacheDir);
             // Filtra solo i file dei sottotitoli italiani
-            const langFiles = files.filter(f => 
+            const srtFiles = files.filter(f => 
                 f.startsWith(this.getCacheKey(key)) && 
-                (f.includes('.it.srt') || f.includes('.it.txt1'))
+                f.endsWith('.srt') &&
+                f.toLowerCase().includes('_it.')
             );
+            
             const results = [];
             
-            for (const file of langFiles) {
+            for (const file of srtFiles) {
                 const filePath = path.join(this.cacheDir, file);
                 const stats = await fs.stat(filePath);
                 
                 if (Date.now() - stats.mtime.getTime() <= this.ttl) {
                     results.push({
                         lang: 'it',
-                        filePath
+                        filePath,
+                        url: `/subtitle/${file}` // URL relativo per il player Stremio
                     });
                 } else {
                     await fs.unlink(filePath);
@@ -163,7 +147,7 @@ class Cache {
             
             return results;
         } catch (error) {
-            console.error('Error getting all SRT files:', error);
+            console.error('[cache] Error getting SRT files:', error);
             return [];
         }
     }
