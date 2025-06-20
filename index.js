@@ -1,22 +1,4 @@
-// Abilita la garbage collection manuale se l'app viene avviata con --expose-gc
-if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
-  try {
-    global.gc = global.gc || require('vm').runInNewContext('gc');
-    console.log('[Memory] Garbage collection manuale abilitata');
-    
-    // Esegui garbage collection periodicamente
-    const gcInterval = parseInt(process.env.GC_INTERVAL || '300000', 10); // Default 5 minuti
-    setInterval(() => {
-      const before = process.memoryUsage().heapUsed / 1024 / 1024;
-      global.gc();
-      const after = process.memoryUsage().heapUsed / 1024 / 1024;
-      console.log(`[Memory] Garbage collection eseguita: ${before.toFixed(2)} MB -> ${after.toFixed(2)} MB (liberati ${(before - after).toFixed(2)} MB)`);
-    }, gcInterval);
-  } catch (e) {
-    console.warn('[Memory] Impossibile abilitare la garbage collection manuale:', e.message);
-  }
-}
-
+// Importazioni
 const express = require('express');
 const cors = require('cors');
 const { serveHTTP } = require('stremio-addon-sdk');
@@ -26,17 +8,12 @@ const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
 const fs = require('fs').promises;
 
-// Configura trust proxy per Express (necessario quando siamo dietro Nginx)
-const app = express();
-app.enable('trust proxy');
-
 // Funzione per determinare se una richiesta è HTTPS
 function isSecure(req) {
-    // Controlla vari header che potrebbero indicare HTTPS
-    return req.secure || // Express 'secure' property
-           req.get('x-forwarded-proto') === 'https' || // Standard header
-           req.get('x-arr-ssl') || // Azure
-           req.get('cloudfront-forwarded-proto') === 'https'; // CloudFront
+    return req.secure || 
+           req.get('x-forwarded-proto') === 'https' || 
+           req.get('x-arr-ssl') || 
+           req.get('cloudfront-forwarded-proto') === 'https';
 }
 
 // Funzione per costruire l'URL base per i sottotitoli
@@ -182,146 +159,95 @@ subtitleRouter.get('/:file', async (req, res) => {
     }
 });
 
-// Configuriamo l'addon di Stremio con il router dei sottotitoli
-const options = {
-    port: process.env.PORT || 3000,
-    getRouter: () => {
-        const router = express.Router();
-        
-        // Aggiungiamo il supporto CORS per tutti gli endpoint
-        router.use(cors({
+// Configurazione del server
+async function startServer() {
+    try {
+        // Inizializza la cache
+        await initializeCache();
+
+        // Crea l'app Express
+        const app = express();
+        const port = process.env.PORT || 3000;
+
+        // Configurazione base
+        app.enable('trust proxy');
+        app.use(cors({
             origin: '*',
             methods: ['GET', 'HEAD'],
             allowedHeaders: ['Content-Type', 'Accept', 'Range'],
             exposedHeaders: ['Content-Length', 'Content-Range']
         }));
 
-        // Log di tutte le richieste con info sul protocollo
-        router.use((req, res, next) => {
-            console.log(`[Router] ${req.method} ${req.path} via ${isSecure(req) ? 'HTTPS' : 'HTTP'} da ${req.ip}`);
+        // Log middleware
+        app.use((req, res, next) => {
+            console.log(`[HTTP] ${req.method} ${req.originalUrl}`);
+            console.log(`[HTTP] Protocol: ${req.protocol}`);
+            console.log(`[HTTP] Headers:`, JSON.stringify({
+                'x-forwarded-proto': req.get('x-forwarded-proto'),
+                'x-forwarded-host': req.get('x-forwarded-host'),
+                'host': req.get('host')
+            }, null, 2));
             next();
         });
-        
-        // Funzione per costruire l'URL completo per un sottotitolo
-        const getFullSubtitleUrl = (req, fileName) => {
-            const baseUrl = getSubtitleBaseUrl(req);
-            return `${baseUrl}/${fileName}`;
-        };
 
-        // Montiamo il router dei sottotitoli PRIMA degli endpoint Stremio
-        router.use('/subtitle', subtitleRouter);
-        
-        // Aggiungiamo gli endpoint standard dell'addon
-        router.get('/manifest.json', (req, res) => {
-            // Modifichiamo il manifest per includere l'URL base corretto
-            const manifest = { ...addonInterface.manifest };
-            const baseUrl = getSubtitleBaseUrl(req).replace('/subtitle', '');
-            if (manifest.behaviorHints && manifest.behaviorHints.configurationURL) {
-                manifest.behaviorHints.configurationURL = `${baseUrl}${manifest.behaviorHints.configurationURL}`;
-            }
-            res.setHeader('Content-Type', 'application/json');
-            res.send(manifest);
-        });
-
-        // Endpoint per verificare lo stato della cache dei sottotitoli
-        router.get('/subtitle/status', async (req, res) => {
-            try {
-                const cacheDir = path.join(__dirname, 'cache');
-                const files = await fs.readdir(cacheDir);
-                const stats = [];
-                
-                for (const file of files) {
-                    if (file.endsWith('.it.srt')) {
-                        const filePath = path.join(cacheDir, file);
-                        const fileStats = await fs.stat(filePath);
-                        stats.push({
-                            file,
-                            url: getFullSubtitleUrl(req, file),
-                            size: fileStats.size,
-                            age: (Date.now() - fileStats.mtime.getTime()) / 3600000
-                        });
-                    }
+        // Endpoint di test/stato
+        app.get('/status', (req, res) => {
+            res.json({
+                protocol: req.protocol,
+                baseUrl: `${req.protocol}://${req.get('host')}`,
+                headers: req.headers,
+                uptime: process.uptime(),
+                cache: {
+                    directory: path.join(__dirname, 'cache'),
+                    exists: fs.existsSync(path.join(__dirname, 'cache'))
                 }
-                
-                res.json({
-                    protocol: isSecure(req) ? 'HTTPS' : 'HTTP',
-                    baseUrl: getSubtitleBaseUrl(req),
-                    total: stats.length,
-                    files: stats
-                });
-            } catch (error) {
-                res.status(500).json({ error: error.message });
-            }
+            });
         });
 
-        // Handler per i sottotitoli
-        router.get('/:resource/:type/:id.json', async (req, res) => {
-            const { resource, type, id } = req.params;
-            const extra = req.query;
+        // Monta il router dei sottotitoli
+        app.use('/subtitle', subtitleRouter);
 
-            console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
-
-            if (resource === 'subtitles') {
-                try {
-                    const result = await addonInterface.get({ resource, type, id, extra });
-                    if (result && result.subtitles) {
-                        // Modifica gli URL dei sottotitoli per usare HTTPS quando necessario
-                        result.subtitles = result.subtitles.map(sub => ({
-                            ...sub,
-                            url: getFullSubtitleUrl(req, path.basename(sub.url))
-                        }));
-                    }
-                    res.setHeader('Content-Type', 'application/json');
-                    res.send(result);
-                    return;
-                } catch (err) {
-                    console.error('[ERROR]', err.message);
-                    res.status(500).send({ error: err.message });
-                    return;
-                }
+        // Crea e monta il middleware Stremio
+        const addonMiddleware = serveHTTP(addonInterface, { 
+            getRouter: () => {
+                const router = express.Router();
+                router.use(errorHandler);
+                return router;
             }
+        });
+        app.use(addonMiddleware);
 
-            if (resource === 'stream' && type === 'series' && !id.includes(':')) {
-                console.log(`[BLOCK] Stream generico bloccato per ${id}`);
-                return res.json({
-                    streams: [{
-                        title: 'Seleziona un episodio',
-                        url: 'https://stremio.com',
-                        isFree: true,
-                        behaviorHints: { notWebReady: true, catalogNotSelectable: true }
-                    }]
-                });
-            }
+        // Avvia il server
+        app.listen(port, () => {
+            console.log(`👉 Addon Stremio in ascolto su porta ${port}`);
+            console.log(`📝 Test URLs:`);
+            console.log(`   http://127.0.0.1:${port}/status`);
+            console.log(`   http://127.0.0.1:${port}/manifest.json`);
+        });
 
+        // Abilita garbage collection se richiesto
+        if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
             try {
-                const out = await addonInterface.get({ resource, type, id, extra });
-                res.setHeader('Content-Type', 'application/json');
-                res.send(out);
-            } catch (err) {
-                console.error('[ERROR]', err.message);
-                res.status(500).send({ error: err.message });
+                global.gc = global.gc || require('vm').runInNewContext('gc');
+                console.log('[Memory] Garbage collection manuale abilitata');
+                
+                const gcInterval = parseInt(process.env.GC_INTERVAL || '300000', 10);
+                setInterval(() => {
+                    const before = process.memoryUsage().heapUsed / 1024 / 1024;
+                    global.gc();
+                    const after = process.memoryUsage().heapUsed / 1024 / 1024;
+                    console.log(`[Memory] GC: ${before.toFixed(2)} MB -> ${after.toFixed(2)} MB (liberati ${(before - after).toFixed(2)} MB)`);
+                }, gcInterval);
+            } catch (e) {
+                console.warn('[Memory] Impossibile abilitare la garbage collection manuale:', e.message);
             }
-        });
+        }
 
-        // Gestione 404 per richieste non gestite
-        router.use((req, res) => {
-            console.log(`[404] Richiesta non gestita: ${req.method} ${req.path}`);
-            res.status(404).send('Not Found');
-        });
-
-        // Aggiungiamo il middleware di gestione errori
-        router.use(errorHandler);
-
-        return router;
+    } catch (error) {
+        console.error('Errore durante l\'avvio del server:', error);
+        process.exit(1);
     }
-};
+}
 
-// Inizializziamo la cache e poi avviamo il server
-initializeCache().then(() => {
-    // Avviamo il server con le nostre configurazioni personalizzate
-    serveHTTP(addonInterface, options);
-    console.log(`👉 Addon Stremio in ascolto su porta ${options.port}`);
-}).catch(error => {
-    console.error('[Cache] Errore durante l\'inizializzazione della cache:', error);
-    process.exit(1);
-});
+// Avvia il server
+startServer();
