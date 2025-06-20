@@ -6,7 +6,6 @@ const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
 const fs = require('fs').promises;
-const fsSync = require('fs');
 
 // Funzione per determinare se una richiesta è HTTPS
 function isSecure(req) {
@@ -70,7 +69,7 @@ async function initializeCache() {
     }
 }
 
-// Creiamo un router per i sottotitoli
+// Creiamo il router dei sottotitoli
 const subtitleRouter = express.Router();
 
 // Configuriamo il router dei sottotitoli
@@ -91,7 +90,6 @@ subtitleRouter.get('/:file', async (req, res) => {
     try {
         // Debug del percorso file
         console.log(`[subtitle] Cerco il file in: ${filePath}`);
-        console.log(`[subtitle] La directory __dirname è: ${__dirname}`);
         
         // Verifica che la directory cache esista
         const cacheDir = path.join(__dirname, 'cache');
@@ -112,7 +110,13 @@ subtitleRouter.get('/:file', async (req, res) => {
         }
 
         // Verifica esistenza e validità del file
-        const exists = await fs.access(filePath).then(() => true).catch(() => false);
+        let exists = true;
+        try {
+            await fs.access(filePath);
+        } catch {
+            exists = false;
+        }
+
         if (!exists) {
             console.error(`[subtitle] File non trovato: ${filePath}`);
             return res.status(404).send('Subtitle not found');
@@ -154,7 +158,7 @@ subtitleRouter.get('/:file', async (req, res) => {
         console.log(`[subtitle] Servito file: ${fileName} (${(stats.size / 1024).toFixed(2)} KB in ${duration}ms)`);
     } catch (error) {
         console.error(`[subtitle] Errore durante il serving di ${fileName}:`, error);
-        console.error(error.stack); // Log dello stack trace completo
+        console.error(error.stack);
         res.status(500).send('Error serving subtitle');
     }
 });
@@ -190,69 +194,59 @@ async function startServer() {
             next();
         });
 
-        // Endpoint di test/stato
+        // Endpoint di stato
         app.get('/status', async (req, res) => {
             try {
                 const cacheDir = path.join(__dirname, 'cache');
-                let cacheStats = { files: [], totalSize: 0, fileCount: 0 };
+                let cacheExists = false;
+                let cacheFiles = [];
                 
-                // Verifica l'esistenza e lo stato della cache
                 try {
-                    const exists = await fs.access(cacheDir).then(() => true).catch(() => false);
-                    if (exists) {
-                        const files = await fs.readdir(cacheDir);
-                        for (const file of files) {
-                            const filePath = path.join(cacheDir, file);
-                            const stats = await fs.stat(filePath);
-                            cacheStats.files.push({
+                    await fs.access(cacheDir);
+                    cacheExists = true;
+                    const files = await fs.readdir(cacheDir);
+                    for (const file of files) {
+                        if (file.endsWith('.it.srt')) {
+                            const stats = await fs.stat(path.join(cacheDir, file));
+                            cacheFiles.push({
                                 name: file,
                                 size: stats.size,
-                                age: Date.now() - stats.mtime.getTime(),
-                                mtime: stats.mtime
+                                age: (Date.now() - stats.mtime.getTime()) / 3600000
                             });
-                            cacheStats.totalSize += stats.size;
                         }
-                        cacheStats.fileCount = files.length;
                     }
-                } catch (error) {
-                    console.error('[status] Error getting cache stats:', error);
-                    cacheStats.error = error.message;
+                } catch (e) {
+                    console.log('[Status] Cache directory check error:', e.message);
                 }
 
                 res.json({
-                    status: 'ok',
-                    uptime: {
-                        seconds: process.uptime(),
-                        formatted: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m ${Math.floor(process.uptime() % 60)}s`
-                    },
+                    status: 'running',
+                    uptime: process.uptime(),
                     memory: process.memoryUsage(),
-                    server: {
-                        protocol: req.protocol,
+                    protocol: {
+                        detected: req.protocol,
+                        secure: isSecure(req),
+                        headers: {
+                            'x-forwarded-proto': req.get('x-forwarded-proto'),
+                            'x-forwarded-host': req.get('x-forwarded-host'),
+                            'host': req.get('host')
+                        }
+                    },
+                    request: {
+                        ip: req.ip,
+                        path: req.path,
                         baseUrl: `${req.protocol}://${req.get('host')}`,
-                        headers: req.headers,
-                        port: process.env.PORT || 3000,
-                        env: process.env.NODE_ENV || 'development'
+                        fullUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`
                     },
                     cache: {
                         directory: cacheDir,
-                        exists: await fs.access(cacheDir).then(() => true).catch(() => false),
-                        stats: {
-                            fileCount: cacheStats.fileCount,
-                            totalSizeBytes: cacheStats.totalSize,
-                            totalSizeMB: (cacheStats.totalSize / (1024 * 1024)).toFixed(2),
-                            files: cacheStats.files.map(f => ({
-                                name: f.name,
-                                sizeKB: (f.size / 1024).toFixed(2),
-                                ageHours: (f.age / (1000 * 60 * 60)).toFixed(2),
-                                lastModified: f.mtime
-                            }))
-                        }
+                        exists: cacheExists,
+                        files: cacheFiles
                     }
                 });
             } catch (error) {
-                console.error('[status] Error in status endpoint:', error);
-                res.status(500).json({
-                    status: 'error',
+                console.error('[Status] Error:', error);
+                res.status(500).json({ 
                     error: error.message,
                     stack: error.stack
                 });
@@ -260,7 +254,9 @@ async function startServer() {
         });
 
         // Monta il router dei sottotitoli
-        app.use('/subtitle', subtitleRouter);        // Configura il router Stremio
+        app.use('/subtitle', subtitleRouter);
+
+        // Configura il router Stremio
         const stremioRouter = express.Router();
         
         // Usa il router per gli endpoint standard di Stremio
@@ -310,6 +306,12 @@ async function startServer() {
 
         // Monta il router Stremio
         app.use(stremioRouter);
+
+        // Gestione 404 per richieste non gestite
+        app.use((req, res) => {
+            console.log(`[404] Richiesta non gestita: ${req.method} ${req.path}`);
+            res.status(404).send('Not Found');
+        });
 
         // Avvia il server
         app.listen(port, () => {
