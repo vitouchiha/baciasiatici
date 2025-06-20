@@ -26,6 +26,7 @@ const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
 const fs = require('fs').promises;
+const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./api/sub_decrypter');
 
 // Espone la cartella data
 app.use('/data', express.static(path.join(__dirname, 'data')));
@@ -38,7 +39,7 @@ app.get('/subtitle/:file', async (req, res) => {
     console.log(`[subtitle] Request for file: ${file}`);
     
     // Verifica che il file richiesto sia un sottotitolo
-    if (!file.endsWith('.srt')) {
+    if (!file.endsWith('.srt') && !file.endsWith('.txt1')) {
         console.error('[subtitle] Invalid file extension');
         return res.status(400).send('Invalid subtitle file');
     }
@@ -54,15 +55,38 @@ app.get('/subtitle/:file', async (req, res) => {
 
         // Leggi il contenuto del file
         const content = await fs.readFile(filePath, 'utf8');
+        let finalContent = content;
+
+        // Se è un file .txt1, decripta il contenuto
+        if (file.endsWith('.txt1')) {
+            console.log('[subtitle] Decrypting .txt1 subtitle');
+            try {
+                const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
+                const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
+                
+                if (content.includes('static=true')) {
+                    finalContent = decryptKisskhSubtitleStatic(Buffer.from(content), STATIC_KEY, STATIC_IV);
+                } else {
+                    finalContent = decryptKisskhSubtitleFull(Buffer.from(content));
+                }
+
+                if (!finalContent || finalContent.trim().length === 0) {
+                    throw new Error('Decryption produced empty content');
+                }
+            } catch (error) {
+                console.error('[subtitle] Decryption error:', error);
+                return res.status(500).send('Error decrypting subtitle');
+            }
+        }
         
         // Imposta gli headers appropriati
         res.setHeader('Content-Type', 'application/x-subrip');
-        res.setHeader('Content-Disposition', `inline; filename="${file}"`);
+        res.setHeader('Content-Disposition', `inline; filename="${file.replace('.txt1', '.srt')}"`);
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache per 1 ora
         
         // Invia il contenuto
-        res.send(content);
+        res.send(finalContent);
         console.log(`[subtitle] Successfully served file: ${file}`);
     } catch (error) {
         console.error(`[subtitle] Error serving file ${filePath}:`, error);
