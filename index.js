@@ -312,7 +312,8 @@ async function startServer() {
                         }]
                     };
                 } else {
-                    result = await addonInterface[resource]({ type, id, extra });
+                    // Usa il metodo get dell'addon SDK
+                    result = await addonInterface.get(resource, type, id, extra);
 
                     // Se è una richiesta di sottotitoli, assicurati che gli URL siano corretti
                     if (resource === 'subtitles' && result && result.subtitles) {
