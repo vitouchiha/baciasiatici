@@ -1,7 +1,7 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const kisskh = require('./kisskh');
 const { getCloudflareCookie } = require('./cloudflare');
-const { decryptKisskhSubtitleFull } = require('./sub_decrypter');
+const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./sub_decrypter');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const axios = require('axios');
@@ -19,6 +19,110 @@ async function getAxiosHeaders() {
         'Origin': 'https://kisskh.co/',
         'Cookie': cfCookie
     };
+}
+
+// Funzione per recuperare i sottotitoli usando Puppeteer
+async function getSubtitlesWithPuppeteer(serieId, episodeId) {
+    const epId = extractEpisodeNumericId(episodeId);
+    const browser = await puppeteerExtra.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    let subApiUrl = null;
+    try {
+        const page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+        
+        // Intercetta le richieste per trovare l'URL dei sottotitoli
+        page.on('request', request => {
+            const url = request.url();
+            if (!subApiUrl && url.includes('/api/Sub/')) {
+                subApiUrl = url;
+                console.log('[subtitles] Found subtitle API endpoint:', url);
+            }
+        });
+
+        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${epId}`, {
+            waitUntil: 'networkidle2',
+            timeout: 60000
+        });
+        await new Promise(resolve => setTimeout(resolve, 4000));
+
+        if (!subApiUrl) {
+            console.warn('[subtitles] No subtitle endpoint intercepted');
+            return [];
+        }
+
+        const headers = await getAxiosHeaders();
+        const response = await axios.get(subApiUrl, { responseType: 'arraybuffer', headers });
+        const buffer = Buffer.from(response.data);
+        const asString = buffer.slice(0, 2000).toString('utf8').trim();
+        
+        let arr;
+        if (asString.startsWith('[')) {
+            arr = JSON.parse(asString);
+        } else if (asString.startsWith('{')) {
+            arr = [JSON.parse(asString)];
+        } else {
+            console.warn('[subtitles] Response is not a subtitle list!');
+            return [];
+        }
+
+        console.log(`[subtitles] Found ${arr.length} subtitle tracks from API`);
+
+        const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
+        const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
+        const decodedSubs = [];
+
+        for (const s of arr) {
+            let subtitleUrl = s.src;
+            if (!subtitleUrl && s.GET && s.GET.host && s.GET.filename) {
+                subtitleUrl = `${s.GET.scheme || 'https'}://${s.GET.host}${s.GET.filename}`;
+                if (s.GET.query && s.GET.query.v) {
+                    subtitleUrl += `?v=${s.GET.query.v}`;
+                }
+            }
+            
+            if (!subtitleUrl) {
+                console.log('[subtitles] No URL found in subtitle data');
+                continue;
+            }
+
+            try {
+                console.log(`[subtitles] Fetching from ${subtitleUrl}`);
+                const subResponse = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
+                const subBuffer = Buffer.from(subResponse.data);
+                const subText = subBuffer.toString('utf8').trim();
+
+                let text = null;
+                // Prova prima come SRT/WEBVTT
+                if (subText.startsWith('1') || subText.startsWith('WEBVTT')) {
+                    text = decryptKisskhSubtitleFull(subText);
+                } 
+                // Se non è SRT/WEBVTT, prova come .txt1
+                else if (subBuffer.length > 32) {
+                    text = decryptKisskhSubtitleStatic(subBuffer, STATIC_KEY, STATIC_IV);
+                }
+
+                if (text) {
+                    console.log('[subtitles] Successfully decrypted subtitle');
+                    decodedSubs.push({
+                        text,
+                        lang: s.language || s.land || 'ko'
+                    });
+                }
+            } catch (error) {
+                console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
+            }
+        }
+
+        return decodedSubs;
+    } catch (error) {
+        console.error('[subtitles] Error:', error.message);
+        return [];
+    } finally {
+        await browser.close();
+    }
 }
 
 const builder = new addonBuilder({
@@ -529,51 +633,47 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         }
 
         const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
-        const series = await getCachedSeriesDetails(seriesId);
-        if (!series) return { subtitles: [] };
-
-        const episode = series.episodes.find(ep => ep.id === id);
-        if (!episode) return { subtitles: [] };
-
-        // Get episode subtitles
+        
+        // Prima prova con il metodo diretto
         const headers = await getAxiosHeaders();
         const subUrl = `https://kisskh.co/api/DramaList/Episode/${episodeId}/Subtitle`;
-        console.log(`[subtitles] Fetching from ${subUrl}`);
+        console.log(`[subtitles] Trying direct API at ${subUrl}`);
         
-        const { data: subtitleData } = await axios.get(subUrl, { headers });
-        if (!subtitleData || !subtitleData.length) {
-            console.log(`[subtitles] No subtitles found at ${subUrl}`);
-            return { subtitles: [] };
+        let processedSubs = [];
+        
+        try {
+            const { data: subtitleData } = await axios.get(subUrl, { headers });
+            if (subtitleData && subtitleData.length > 0) {
+                for (const sub of subtitleData) {
+                    if (!sub.src) continue;
+                    const { data: encryptedContent } = await axios.get(sub.src, { headers });
+                    const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
+                    if (decryptedContent) {
+                        await cache.setSRT(id, decryptedContent);
+                        processedSubs.push({
+                            id: `${id}_${sub.language || 'ko'}`,
+                            url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
+                            lang: sub.language || 'ko'
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            console.log(`[subtitles] Direct API failed, trying Puppeteer method: ${error.message}`);
         }
 
-        console.log(`[subtitles] Found ${subtitleData.length} subtitle tracks`);
-
-        // Process each subtitle
-        const processedSubs = [];
-        for (const sub of subtitleData) {
-            if (!sub.src) {
-                console.log(`[subtitles] Skipping subtitle without src`);
-                continue;
-            }
-
-            try {
-                console.log(`[subtitles] Fetching subtitle content from ${sub.src}`);
-                const { data: encryptedContent } = await axios.get(sub.src, { headers });
-                console.log(`[subtitles] Decrypting subtitle content`);
-                const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
-                
-                // Save to cache
-                await cache.setSRT(id, decryptedContent);
-                console.log(`[subtitles] Saved to cache with key ${id}`);
-                
+        // Se il metodo diretto fallisce, prova con Puppeteer
+        if (processedSubs.length === 0) {
+            console.log(`[subtitles] Trying Puppeteer method`);
+            const puppeteerSubs = await getSubtitlesWithPuppeteer(seriesId, episodeId);
+            
+            for (const sub of puppeteerSubs) {
+                await cache.setSRT(id, sub.text);
                 processedSubs.push({
-                    id: `${id}_${sub.language || 'ko'}`,
+                    id: `${id}_${sub.lang}`,
                     url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
-                    lang: sub.language || 'ko'
+                    lang: sub.lang
                 });
-            } catch (error) {
-                console.error(`[subtitles] Error processing subtitle: ${error.message}`);
-                continue;
             }
         }
 
