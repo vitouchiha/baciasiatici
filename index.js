@@ -291,45 +291,75 @@ async function startServer() {
             res.send(addonInterface.manifest);
         });
 
+        // Endpoint per il catalog
+        stremioRouter.get('/catalog/:type/:id.json', async (req, res) => {
+            const { type, id } = req.params;
+            const extra = req.query;
+
+            console.log(`[Stremio] Request: catalog/${type}/${id}`);
+            console.log('[Stremio] Extra:', extra);
+
+            try {
+                const result = await addonInterface.catalog({ type, id, extra });
+                res.setHeader('Content-Type', 'application/json');
+                res.send(result);
+            } catch (error) {
+                console.error('[Stremio] Catalog Error:', error.message);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Endpoint per meta, stream e subtitle
         stremioRouter.get('/:resource/:type/:id.json', async (req, res) => {
             const { resource, type, id } = req.params;
             const extra = req.query;
 
             console.log(`[Stremio] Request: ${resource}/${type}/${id}`);
+            console.log('[Stremio] Extra:', extra);
 
             try {
-                if (resource === 'stream' && type === 'series' && !id.includes(':')) {
-                    return res.json({
-                        streams: [{
-                            title: 'Seleziona un episodio',
-                            url: 'https://stremio.com',
-                            isFree: true,
-                            behaviorHints: { notWebReady: true, catalogNotSelectable: true }
-                        }]
-                    });
-                }
-
-                const result = await addonInterface.get({ resource, type, id, extra });
+                let result;
                 
-                // Se è una richiesta di sottotitoli, assicurati che gli URL siano corretti
-                if (resource === 'subtitles' && result.subtitles) {
-                    result.subtitles = result.subtitles.map(sub => {
-                        // Estrai solo il nome del file dall'URL originale
-                        const fileName = sub.url && sub.url.startsWith('./subtitle/') ? 
-                            sub.url.substring('./subtitle/'.length) : 
-                            path.basename(sub.url);
-                            
-                        return {
-                            ...sub,
-                            url: `${getSubtitleBaseUrl(req)}/${fileName}`
-                        };
-                    });
+                switch (resource) {
+                    case 'meta':
+                        result = await addonInterface.meta({ type, id, extra });
+                        break;
+                    case 'stream':
+                        if (type === 'series' && !id.includes(':')) {
+                            result = {
+                                streams: [{
+                                    title: 'Seleziona un episodio',
+                                    url: 'https://stremio.com',
+                                    isFree: true,
+                                    behaviorHints: { notWebReady: true, catalogNotSelectable: true }
+                                }]
+                            };
+                        } else {
+                            result = await addonInterface.stream({ type, id, extra });
+                        }
+                        break;
+                    case 'subtitles':
+                        result = await addonInterface.subtitles({ type, id, extra });
+                        if (result && result.subtitles) {
+                            result.subtitles = result.subtitles.map(sub => {
+                                const fileName = sub.url && sub.url.startsWith('./subtitle/') ? 
+                                    sub.url.substring('./subtitle/'.length) : 
+                                    path.basename(sub.url);
+                                return {
+                                    ...sub,
+                                    url: `${getSubtitleBaseUrl(req)}/${fileName}`
+                                };
+                            });
+                        }
+                        break;
+                    default:
+                        throw new Error(`Invalid resource type: ${resource}`);
                 }
 
                 res.setHeader('Content-Type', 'application/json');
                 res.send(result);
             } catch (error) {
-                console.error('[Stremio] Error:', error.message);
+                console.error(`[Stremio] ${resource.charAt(0).toUpperCase() + resource.slice(1)} Error:`, error.message);
                 res.status(500).json({ error: error.message });
             }
         });
@@ -337,8 +367,8 @@ async function startServer() {
         // Aggiungi il middleware di gestione errori al router Stremio
         stremioRouter.use(errorHandler);
 
-        // Monta il router Stremio
-        app.use(stremioRouter);
+        // Monta il router Stremio alla root
+        app.use('/', stremioRouter);
 
         // Gestione 404 per richieste non gestite
         app.use((req, res) => {
