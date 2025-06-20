@@ -23,12 +23,14 @@ async function getAxiosHeaders() {
 
 // Funzione per verificare se un sottotitolo è in italiano
 function isItalianSubtitle(subtitle, url) {
-    return (subtitle.language || '').toLowerCase() === 'it' ||
-           (subtitle.label || '').toLowerCase() === 'italian' ||
-           (subtitle.lang || '').toLowerCase() === 'it' ||
-           (url || '').toLowerCase().includes('.it.srt') ||
-           (url || '').toLowerCase().includes('/it/') ||
-           (url || '').toLowerCase().includes('italian');
+    const check = (str) => str && str.toLowerCase().includes('it');
+    return check(subtitle.language) || 
+           check(subtitle.label) || 
+           check(subtitle.lang) ||
+           (url && (url.toLowerCase().includes('.it.txt1') || 
+                   url.toLowerCase().includes('.it.srt') || 
+                   url.toLowerCase().includes('/it/') ||
+                   url.toLowerCase().includes('italian')));
 }
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
@@ -124,26 +126,30 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                     headers,
                     timeout: 10000
                 });
+
+                // Se l'URL termina con .txt1, salva il contenuto criptato
+                const isEncrypted = subtitleUrl.toLowerCase().endsWith('.txt1');
+                let content = Buffer.from(subResponse.data).toString('utf8');
                 
-                let content;
-                if (subtitleUrl.includes('static=true')) {
+                if (!isEncrypted && subtitleUrl.includes('static=true')) {
                     content = decryptKisskhSubtitleStatic(subResponse.data, STATIC_KEY, STATIC_IV);
-                } else {
+                } else if (!isEncrypted) {
                     content = decryptKisskhSubtitleFull(subResponse.data);
                 }
 
                 if (!content || content.trim().length === 0) {
-                    console.warn('[subtitles] Empty subtitle content after decryption');
+                    console.warn('[subtitles] Empty subtitle content after processing');
                     continue;
                 }
 
                 // Salva il sottotitolo in cache
-                const savedPath = await cache.setSRT(cacheKey, content, 'it');
+                const savedPath = await cache.setSRT(cacheKey, content, 'it', isEncrypted);
                 if (savedPath) {
                     decodedSubs.push({
                         lang: 'it',
                         filePath: savedPath,
-                        url: `/subtitle/${path.basename(savedPath)}`
+                        url: `/subtitle/${path.basename(savedPath)}`,
+                        isEncrypted
                     });
                 }
             } catch (error) {
