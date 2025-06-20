@@ -62,12 +62,12 @@ app.get('/manifest.json', (req, res) => {
 
 // 🔍 Risorse catalog/meta/stream
 app.get('/:resource/:type/:id.json', async (req, res) => {
-    const { resource, type, id } = req.params;
-    const extra = req.query;
+  const { resource, type, id } = req.params;
+  const extra = req.query;
 
-    console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+  console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
 
-    if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+  if (resource === 'stream' && type === 'series' && !id.includes(':')) {
         console.log(`[BLOCK] Stream generico bloccato per ${id}`);
         return res.json({
             streams: [{
@@ -118,6 +118,5 @@ app.use(errorHandler);
 
 // 🛰️ Avvio server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
-});
+serveHTTP(addonInterface, { port: PORT });
+console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
