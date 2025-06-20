@@ -91,7 +91,15 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 console.log(`[subtitles] Fetching from ${subtitleUrl}`);
                 const subResponse = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
                 const subBuffer = Buffer.from(subResponse.data);
-                const subText = subBuffer.toString('utf8').trim();
+                const subText = subBuffer.toString('utf8').trim();                // Controlla se il sottotitolo è in italiano                const isItalian = (s.language || '').toLowerCase() === 'it' || 
+                                (s.label || '').toLowerCase() === 'italian' ||
+                                subtitleUrl.toLowerCase().includes('.it.srt') ||
+                                subtitleUrl.toLowerCase().includes('.it.txt1');
+
+                if (!isItalian) {
+                    console.log('[subtitles] Skipping non-Italian subtitle');
+                    continue;
+                }
 
                 let text = null;
                 // Prova prima come SRT/WEBVTT
@@ -104,10 +112,10 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 }
 
                 if (text) {
-                    console.log('[subtitles] Successfully decrypted subtitle');
+                    console.log('[subtitles] Successfully decrypted Italian subtitle');
                     decodedSubs.push({
                         text,
-                        lang: s.language || s.land || 'ko'
+                        lang: 'it'
                     });
                 }
             } catch (error) {
@@ -621,14 +629,16 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
     console.log(`[subtitles] Request for ${type} ${id}`);
     try {
         // Check cache first
-        const cachedSubs = await cache.getSRT(id);
-        if (cachedSubs) {
-            console.log(`[subtitles] Cache hit for ${id}`);
-            return { subtitles: [{ 
-                id: `${id}_ko`,
-                url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
-                lang: 'ko' 
-            }]};
+        const cachedSubs = await cache.getAllSRTFiles(id);
+        if (cachedSubs.length > 0) {
+            console.log(`[subtitles] Cache hit for ${id}, found ${cachedSubs.length} subtitles`);
+            return {
+                subtitles: cachedSubs.map(sub => ({
+                    id: `${id}_${sub.lang}`,
+                    url: `http://127.0.0.1:7000/cached-subs/${path.basename(sub.filePath)}`,
+                    lang: sub.lang
+                }))
+            };
         }
 
         const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
@@ -641,18 +651,27 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         let processedSubs = [];
         
         try {
-            const { data: subtitleData } = await axios.get(subUrl, { headers });
-            if (subtitleData && subtitleData.length > 0) {
-                for (const sub of subtitleData) {
+            const { data: subtitleData } = await axios.get(subUrl, { headers });            if (subtitleData && subtitleData.length > 0) {
+                // Filtra solo i sottotitoli in italiano
+                const italianSubs = subtitleData.filter(sub => 
+                    (sub.language || '').toLowerCase() === 'it' || 
+                    (sub.label || '').toLowerCase() === 'italian' ||
+                    (sub.src || '').toLowerCase().includes('.it.srt')
+                );
+
+                console.log(`[subtitles] Found ${italianSubs.length} Italian subtitles`);
+
+                for (const sub of italianSubs) {
                     if (!sub.src) continue;
                     const { data: encryptedContent } = await axios.get(sub.src, { headers });
                     const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
                     if (decryptedContent) {
-                        await cache.setSRT(id, decryptedContent);
+                        await cache.setSRT(id, decryptedContent, 'it');
+                        const cacheKey = cache.getCacheKey(`${id}_it`);
                         processedSubs.push({
-                            id: `${id}_${sub.language || 'ko'}`,
-                            url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
-                            lang: sub.language || 'ko'
+                            id: `${id}_it`,
+                            url: `http://127.0.0.1:7000/cached-subs/${cacheKey}.srt`,
+                            lang: 'it'
                         });
                     }
                 }
@@ -667,10 +686,11 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             const puppeteerSubs = await getSubtitlesWithPuppeteer(seriesId, episodeId);
             
             for (const sub of puppeteerSubs) {
-                await cache.setSRT(id, sub.text);
+                await cache.setSRT(id, sub.text, sub.lang);
+                const cacheKey = cache.getCacheKey(`${id}_${sub.lang}`);
                 processedSubs.push({
                     id: `${id}_${sub.lang}`,
-                    url: `http://127.0.0.1:7000/cached-subs/${cache.getCacheKey(id)}.srt`,
+                    url: `http://127.0.0.1:7000/cached-subs/${cacheKey}.srt`,
                     lang: sub.lang
                 });
             }
