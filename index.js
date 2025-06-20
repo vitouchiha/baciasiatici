@@ -34,8 +34,16 @@ app.use(cors());
 
 // Endpoint per servire i sottotitoli dalla cache
 app.get('/subtitle/:file', async (req, res) => {
-    console.log(`[subtitle] Request for file: ${req.params.file}`);
-    const filePath = path.join(__dirname, 'cache', req.params.file);
+    const file = req.params.file;
+    console.log(`[subtitle] Request for file: ${file}`);
+    
+    // Verifica che il file richiesto sia un sottotitolo
+    if (!file.endsWith('.srt')) {
+        console.error('[subtitle] Invalid file extension');
+        return res.status(400).send('Invalid subtitle file');
+    }
+
+    const filePath = path.join(__dirname, 'cache', file);
     
     try {
         const exists = await fs.access(filePath).then(() => true).catch(() => false);
@@ -44,11 +52,18 @@ app.get('/subtitle/:file', async (req, res) => {
             return res.status(404).send('Subtitle not found');
         }
 
+        // Leggi il contenuto del file
         const content = await fs.readFile(filePath, 'utf8');
+        
+        // Imposta gli headers appropriati
         res.setHeader('Content-Type', 'application/x-subrip');
+        res.setHeader('Content-Disposition', `inline; filename="${file}"`);
         res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache per 1 ora
+        
+        // Invia il contenuto
         res.send(content);
-        console.log(`[subtitle] Successfully served file: ${req.params.file}`);
+        console.log(`[subtitle] Successfully served file: ${file}`);
     } catch (error) {
         console.error(`[subtitle] Error serving file ${filePath}:`, error);
         res.status(500).send('Error serving subtitle');
