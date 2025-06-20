@@ -640,12 +640,12 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             console.log(`[subtitles] Cache hit for ${id}, found ${cachedSubs.length} subtitles`);
             return {
                 subtitles: cachedSubs.map(sub => {
-                    // Usa path assoluto per il sottotitolo
-                    const subtitleUrl = `/subtitle/${path.basename(sub.filePath)}`;
-                    console.log(`[subtitles] Serving subtitle at: ${subtitleUrl}`);
+                    const fileName = path.basename(sub.filePath);
+                    const subtitleUrl = `/subtitle/${fileName}`;
+                    console.log(`[subtitles] Serving cached subtitle at: ${subtitleUrl}`);
                     return {
                         id: `${id}_${sub.lang}`,
-                        url: subtitleUrl,  // Il proxy Nginx gestirà correttamente questo path
+                        url: subtitleUrl,
                         lang: sub.lang
                     };
                 })
@@ -676,15 +676,17 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
                     const { data: encryptedContent } = await axios.get(sub.src, { headers });
                     const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
                     if (decryptedContent) {
-                        await cache.setSRT(id, decryptedContent, 'it');
-                        const cacheKey = cache.getCacheKey(`${id}_it`);
-                        const subtitleUrl = `/subtitle/${cacheKey}.srt`;
-                        console.log(`[subtitles] Generated URL for subtitle: ${subtitleUrl}`);
-                        processedSubs.push({
-                            id: `${id}_it`,
-                            url: subtitleUrl,
-                            lang: 'it'
-                        });
+                        const filePath = await cache.setSRT(id, decryptedContent, 'it');
+                        if (filePath) {
+                            const fileName = path.basename(filePath);
+                            const subtitleUrl = `/subtitle/${fileName}`;
+                            console.log(`[subtitles] Salvato il file ${fileName} e generato URL: ${subtitleUrl}`);
+                            processedSubs.push({
+                                id: `${id}_it`,
+                                url: subtitleUrl,
+                                lang: 'it'
+                            });
+                        }
                     }
                 }
             }
@@ -698,15 +700,17 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             const puppeteerSubs = await getSubtitlesWithPuppeteer(seriesId, episodeId);
             
             for (const sub of puppeteerSubs) {
-                await cache.setSRT(id, sub.text, 'it');
-                const cacheKey = cache.getCacheKey(`${id}_it`);
-                const subtitleUrl = `/subtitle/${cacheKey}.srt`;
-                console.log(`[subtitles] Generated URL for subtitle: ${subtitleUrl}`);
-                processedSubs.push({
-                    id: `${id}_it`,
-                    url: subtitleUrl,
-                    lang: 'it'
-                });
+                const filePath = await cache.setSRT(id, sub.text, 'it');
+                if (filePath) {
+                    const fileName = path.basename(filePath);
+                    const subtitleUrl = `/subtitle/${fileName}`;
+                    console.log(`[subtitles] Salvato il file ${fileName} e generato URL: ${subtitleUrl}`);
+                    processedSubs.push({
+                        id: `${id}_it`,
+                        url: subtitleUrl,
+                        lang: 'it'
+                    });
+                }
             }
         }
 
@@ -717,26 +721,3 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         return { subtitles: [] };
     }
 });
-
-function vttToSrt(vttText) {
-    // Se il testo inizia già con un numero, potrebbe essere già in formato SRT
-    if (/^\d+\s*\n\d{2}:\d{2}:\d{2},\d{3}\s*-->/.test(vttText)) {
-        // console.log('[vttToSrt] Il testo è già in formato SRT, lo restituisco così com'è');
-        return vttText;
-    }
-
-    // Remove WEBVTT header
-    let srt = vttText.replace(/^WEBVTT[\s\S]*?\n\n/, '');
-
-    // Convert timestamps (00:00:00.000 --> 00:00:00.000)
-    srt = srt.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2');
-
-    // Add sequential numbers for each subtitle block
-    let counter = 1;
-    srt = srt.replace(/\n\n/g, () => `\n${counter++}\n`);
-
-    return srt;
-}
-
-
-module.exports = builder.getInterface();
