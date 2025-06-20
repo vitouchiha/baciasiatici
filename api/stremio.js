@@ -140,15 +140,20 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.2.5',
+    version: '1.2.6',
     name: 'KissKH Addon',
-    description: 'Asian content',
+    description: 'Asian content with Italian subtitles',
     resources: [
         { name: 'catalog', types: ['series'] },
         { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
         { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'], idPattern: 'kisskh_\\d+:\\d+' },
         { name: 'subtitles', types: ['series'], idPrefixes: ['kisskh_'] }
     ],
+    behaviorHints: {
+        configurable: true,
+        configurationRequired: false,
+        p2p: false
+    },
     types: ['series'],
     catalogs: [{
         type: 'series',
