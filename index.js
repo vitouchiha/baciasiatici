@@ -1,12 +1,12 @@
 // Importazioni
 const express = require('express');
 const cors = require('cors');
-const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
 const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 
 // Funzione per determinare se una richiesta è HTTPS
 function isSecure(req) {
@@ -205,17 +205,56 @@ async function startServer() {
         });
 
         // Monta il router dei sottotitoli
-        app.use('/subtitle', subtitleRouter);
+        app.use('/subtitle', subtitleRouter);        // Configura il router Stremio
+        const stremioRouter = express.Router();
+        
+        // Usa il router per gli endpoint standard di Stremio
+        stremioRouter.get('/manifest.json', (req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            res.send(addonInterface.manifest);
+        });
 
-        // Crea e monta il middleware Stremio
-        const addonMiddleware = serveHTTP(addonInterface, { 
-            getRouter: () => {
-                const router = express.Router();
-                router.use(errorHandler);
-                return router;
+        stremioRouter.get('/:resource/:type/:id.json', async (req, res) => {
+            const { resource, type, id } = req.params;
+            const extra = req.query;
+
+            console.log(`[Stremio] Request: ${resource}/${type}/${id}`);
+
+            try {
+                if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+                    return res.json({
+                        streams: [{
+                            title: 'Seleziona un episodio',
+                            url: 'https://stremio.com',
+                            isFree: true,
+                            behaviorHints: { notWebReady: true, catalogNotSelectable: true }
+                        }]
+                    });
+                }
+
+                const result = await addonInterface.get({ resource, type, id, extra });
+                
+                // Se è una richiesta di sottotitoli, assicurati che gli URL siano corretti
+                if (resource === 'subtitles' && result.subtitles) {
+                    result.subtitles = result.subtitles.map(sub => ({
+                        ...sub,
+                        url: `${getSubtitleBaseUrl(req)}/${path.basename(sub.url)}`
+                    }));
+                }
+
+                res.setHeader('Content-Type', 'application/json');
+                res.send(result);
+            } catch (error) {
+                console.error('[Stremio] Error:', error.message);
+                res.status(500).json({ error: error.message });
             }
         });
-        app.use(addonMiddleware);
+
+        // Aggiungi il middleware di gestione errori al router Stremio
+        stremioRouter.use(errorHandler);
+
+        // Monta il router Stremio
+        app.use(stremioRouter);
 
         // Avvia il server
         app.listen(port, () => {
