@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 
 class Cache {
-    constructor(ttl = 24 * 60 * 60 * 1000) { // 24 hours default TTL
+    constructor(ttl = 1 * 60 * 60 * 1000) { // 24 hours default TTL
         this.cacheDir = path.join(process.cwd(), 'cache');
         this.ttl = ttl;
         this.init();
@@ -76,9 +76,9 @@ class Cache {
         }
     }
 
-    async setSRT(key, content) {
+    async setSRT(key, content, lang) {
         const cacheKey = this.getCacheKey(key);
-        const filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
+        const filePath = path.join(this.cacheDir, `${cacheKey}.${lang}.srt`);
 
         try {
             await fs.writeFile(filePath, content);
@@ -89,9 +89,9 @@ class Cache {
         }
     }
 
-    async getSRT(key) {
+    async getSRT(key, lang) {
         const cacheKey = this.getCacheKey(key);
-        const filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
+        const filePath = path.join(this.cacheDir, `${cacheKey}.${lang}.srt`);
 
         try {
             const content = await fs.readFile(filePath, 'utf8');
@@ -102,9 +102,40 @@ class Cache {
                 return null;
             }
 
-            return content;
+            return { content, filePath };
         } catch (error) {
             return null;
+        }
+    }
+
+    async getAllSRTFiles(key) {
+        try {
+            const files = await fs.readdir(this.cacheDir);
+            // Filtra solo i file dei sottotitoli italiani
+            const langFiles = files.filter(f => 
+                f.startsWith(this.getCacheKey(key)) && 
+                (f.includes('.it.srt') || f.includes('.it.txt1'))
+            );
+            const results = [];
+            
+            for (const file of langFiles) {
+                const filePath = path.join(this.cacheDir, file);
+                const stats = await fs.stat(filePath);
+                
+                if (Date.now() - stats.mtime.getTime() <= this.ttl) {
+                    results.push({
+                        lang: 'it',
+                        filePath
+                    });
+                } else {
+                    await fs.unlink(filePath);
+                }
+            }
+            
+            return results;
+        } catch (error) {
+            console.error('Error getting all SRT files:', error);
+            return [];
         }
     }
 }
