@@ -26,6 +26,26 @@ const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
 const fs = require('fs').promises;
 
+// Configura trust proxy per Express (necessario quando siamo dietro Nginx)
+const app = express();
+app.enable('trust proxy');
+
+// Funzione per determinare se una richiesta è HTTPS
+function isSecure(req) {
+    // Controlla vari header che potrebbero indicare HTTPS
+    return req.secure || // Express 'secure' property
+           req.get('x-forwarded-proto') === 'https' || // Standard header
+           req.get('x-arr-ssl') || // Azure
+           req.get('cloudfront-forwarded-proto') === 'https'; // CloudFront
+}
+
+// Funzione per costruire l'URL base per i sottotitoli
+function getSubtitleBaseUrl(req) {
+    const proto = isSecure(req) ? 'https' : 'http';
+    const host = req.get('x-forwarded-host') || req.get('host');
+    return `${proto}://${host}/subtitle`;
+}
+
 // Verifica e crea la cartella cache se non esiste
 async function initializeCache() {
     const cacheDir = path.join(__dirname, 'cache');
@@ -176,19 +196,31 @@ const options = {
             exposedHeaders: ['Content-Length', 'Content-Range']
         }));
 
-        // Log di tutte le richieste
+        // Log di tutte le richieste con info sul protocollo
         router.use((req, res, next) => {
-            console.log(`[Router] ${req.method} ${req.path} da ${req.ip}`);
+            console.log(`[Router] ${req.method} ${req.path} via ${isSecure(req) ? 'HTTPS' : 'HTTP'} da ${req.ip}`);
             next();
         });
         
+        // Funzione per costruire l'URL completo per un sottotitolo
+        const getFullSubtitleUrl = (req, fileName) => {
+            const baseUrl = getSubtitleBaseUrl(req);
+            return `${baseUrl}/${fileName}`;
+        };
+
         // Montiamo il router dei sottotitoli PRIMA degli endpoint Stremio
         router.use('/subtitle', subtitleRouter);
         
         // Aggiungiamo gli endpoint standard dell'addon
         router.get('/manifest.json', (req, res) => {
+            // Modifichiamo il manifest per includere l'URL base corretto
+            const manifest = { ...addonInterface.manifest };
+            const baseUrl = getSubtitleBaseUrl(req).replace('/subtitle', '');
+            if (manifest.behaviorHints && manifest.behaviorHints.configurationURL) {
+                manifest.behaviorHints.configurationURL = `${baseUrl}${manifest.behaviorHints.configurationURL}`;
+            }
             res.setHeader('Content-Type', 'application/json');
-            res.send(addonInterface.manifest);
+            res.send(manifest);
         });
 
         // Endpoint per verificare lo stato della cache dei sottotitoli
@@ -204,6 +236,7 @@ const options = {
                         const fileStats = await fs.stat(filePath);
                         stats.push({
                             file,
+                            url: getFullSubtitleUrl(req, file),
                             size: fileStats.size,
                             age: (Date.now() - fileStats.mtime.getTime()) / 3600000
                         });
@@ -211,6 +244,8 @@ const options = {
                 }
                 
                 res.json({
+                    protocol: isSecure(req) ? 'HTTPS' : 'HTTP',
+                    baseUrl: getSubtitleBaseUrl(req),
                     total: stats.length,
                     files: stats
                 });
@@ -219,11 +254,32 @@ const options = {
             }
         });
 
+        // Handler per i sottotitoli
         router.get('/:resource/:type/:id.json', async (req, res) => {
             const { resource, type, id } = req.params;
             const extra = req.query;
 
             console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+
+            if (resource === 'subtitles') {
+                try {
+                    const result = await addonInterface.get({ resource, type, id, extra });
+                    if (result && result.subtitles) {
+                        // Modifica gli URL dei sottotitoli per usare HTTPS quando necessario
+                        result.subtitles = result.subtitles.map(sub => ({
+                            ...sub,
+                            url: getFullSubtitleUrl(req, path.basename(sub.url))
+                        }));
+                    }
+                    res.setHeader('Content-Type', 'application/json');
+                    res.send(result);
+                    return;
+                } catch (err) {
+                    console.error('[ERROR]', err.message);
+                    res.status(500).send({ error: err.message });
+                    return;
+                }
+            }
 
             if (resource === 'stream' && type === 'series' && !id.includes(':')) {
                 console.log(`[BLOCK] Stream generico bloccato per ${id}`);
