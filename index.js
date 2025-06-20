@@ -291,7 +291,6 @@ async function startServer() {
             res.send(addonInterface.manifest);
         });
 
-        // Endpoint per il catalog e altri endpoint Stremio
         stremioRouter.get('/:resource/:type/:id.json', async (req, res) => {
             const { resource, type, id } = req.params;
             const extra = req.query;
@@ -300,33 +299,31 @@ async function startServer() {
             console.log('[Stremio] Extra:', extra);
 
             try {
-                let result;
-                
                 if (resource === 'stream' && type === 'series' && !id.includes(':')) {
-                    result = {
+                    res.json({
                         streams: [{
                             title: 'Seleziona un episodio',
                             url: 'https://stremio.com',
                             isFree: true,
                             behaviorHints: { notWebReady: true, catalogNotSelectable: true }
                         }]
-                    };
-                } else {
-                    // Usa il metodo get dell'addon SDK
-                    result = await addonInterface.get(resource, type, id, extra);
+                    });
+                    return;
+                }
 
-                    // Se è una richiesta di sottotitoli, assicurati che gli URL siano corretti
-                    if (resource === 'subtitles' && result && result.subtitles) {
-                        result.subtitles = result.subtitles.map(sub => {
-                            const fileName = sub.url && sub.url.startsWith('./subtitle/') ? 
-                                sub.url.substring('./subtitle/'.length) : 
-                                path.basename(sub.url);
-                            return {
-                                ...sub,
-                                url: `${getSubtitleBaseUrl(req)}/${fileName}`
-                            };
-                        });
-                    }
+                const result = await addonInterface[resource]({ type, id, extra });
+                
+                // Se è una richiesta di sottotitoli, assicurati che gli URL siano corretti
+                if (resource === 'subtitles' && result && result.subtitles) {
+                    result.subtitles = result.subtitles.map(sub => {
+                        const fileName = sub.url && sub.url.startsWith('./subtitle/') ? 
+                            sub.url.substring('./subtitle/'.length) : 
+                            path.basename(sub.url);
+                        return {
+                            ...sub,
+                            url: `${getSubtitleBaseUrl(req)}/${fileName}`
+                        };
+                    });
                 }
 
                 res.setHeader('Content-Type', 'application/json');
