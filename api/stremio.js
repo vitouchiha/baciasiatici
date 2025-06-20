@@ -138,41 +138,24 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     }
 }
 
+// Configurazione del builder
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
     version: '1.2.6',
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
-    resources: [
-        'catalog',
-        'meta',
-        'stream',
-        'subtitles'
-    ],
+    resources: ['catalog', 'meta', 'stream', 'subtitles'],
     types: ['series'],
-    catalogs: [
-        {
-            type: 'series',
-            id: 'kisskh',
-            name: 'KissKH Series',
-            extra: [
-                {
-                    name: 'search',
-                    isRequired: false
-                },
-                {
-                    name: 'skip',
-                    isRequired: false
-                }
-            ]
-        }
-    ],
-    idPrefixes: ['kisskh_'],
-    behaviorHints: {
-        configurable: true,
-        configurationRequired: false,
-        adult: false
-    }
+    catalogs: [{
+        type: 'series',
+        id: 'kisskh',
+        name: 'KissKH Series',
+        extra: [{
+            name: 'search',
+            isRequired: false
+        }]
+    }],
+    idPrefixes: ['kisskh_']
 });
 
 const seriesDetailsCache = new Map();
@@ -491,17 +474,30 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
     }
 }
 
-builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
+// Handlers
+builder.defineCatalogHandler(async ({ type, id, extra }) => {
     console.log(`[CatalogHandler] Request catalog: type=${type}, id=${id}, extra=${JSON.stringify(extra)}`);
 
-    if (type !== 'series') return { metas: [] };
+    if (type !== 'series' || id !== 'kisskh') {
+        console.log(`[CatalogHandler] Ignoring request for type=${type}, id=${id}`);
+        return { metas: [] };
+    }
 
-    const limit = parseInt(extra.limit) || 30;
-    const skip = parseInt(extra.skip) || 0;
-    const page = Math.floor(skip / limit) + 1;
-    const search = extra.search || '';
-    const metas = await kisskh.getCatalog({ page, limit, search });
-    return { metas };
+    try {
+        const limit = 100;
+        const skip = 0;
+        const page = Math.floor(skip / limit) + 1;
+        const search = extra.search || '';
+        
+        console.log(`[CatalogHandler] Fetching catalog: page=${page}, limit=${limit}, search=${search}`);
+        const metas = await kisskh.getCatalog({ page, limit, search });
+        console.log(`[CatalogHandler] Found ${metas.length} items`);
+        
+        return { metas };
+    } catch (error) {
+        console.error('[CatalogHandler] Error:', error);
+        return { metas: [] };
+    }
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
