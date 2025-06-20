@@ -76,21 +76,23 @@ class Cache {
         }
     }
 
-    async setSRT(key, content, lang) {
+    async setSRT(key, content, lang, encrypted = false) {
         if (lang.toLowerCase() !== 'it') {
             console.log(`[cache] Skipping non-Italian subtitle for key: ${key}`);
             return null;
         }
 
         const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
-        const filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
+        // Se il contenuto è criptato, salva come .txt1, altrimenti come .srt
+        const extension = encrypted ? 'txt1' : 'srt';
+        const filePath = path.join(this.cacheDir, `${cacheKey}.${extension}`);
 
         try {
             await fs.writeFile(filePath, content);
             console.log(`[cache] Saved Italian subtitle: ${path.basename(filePath)}`);
             return filePath;
         } catch (error) {
-            console.error('[cache] SRT write error:', error);
+            console.error('[cache] Subtitle write error:', error);
             return null;
         }
     }
@@ -101,18 +103,29 @@ class Cache {
         }
 
         const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
-        const filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
+        // Prova prima .txt1, poi .srt
+        let filePath = path.join(this.cacheDir, `${cacheKey}.txt1`);
+        let exists = await fs.access(filePath).then(() => true).catch(() => false);
+        
+        if (!exists) {
+            filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
+            exists = await fs.access(filePath).then(() => true).catch(() => false);
+        }
+
+        if (!exists) {
+            return null;
+        }
 
         try {
             const stats = await fs.stat(filePath);
-            
             if (Date.now() - stats.mtime.getTime() > this.ttl) {
                 await fs.unlink(filePath);
                 return null;
             }
 
             const content = await fs.readFile(filePath, 'utf8');
-            return { content, filePath };
+            const isEncrypted = filePath.endsWith('.txt1');
+            return { content, filePath, isEncrypted };
         } catch (error) {
             return null;
         }
@@ -121,16 +134,16 @@ class Cache {
     async getAllSRTFiles(key) {
         try {
             const files = await fs.readdir(this.cacheDir);
-            // Filtra solo i file dei sottotitoli italiani
-            const srtFiles = files.filter(f => 
+            // Filtra i file dei sottotitoli italiani (sia .srt che .txt1)
+            const subtitleFiles = files.filter(f => 
                 f.startsWith(this.getCacheKey(key)) && 
-                f.endsWith('.srt') &&
+                (f.endsWith('.srt') || f.endsWith('.txt1')) &&
                 f.toLowerCase().includes('_it.')
             );
             
             const results = [];
             
-            for (const file of srtFiles) {
+            for (const file of subtitleFiles) {
                 const filePath = path.join(this.cacheDir, file);
                 const stats = await fs.stat(filePath);
                 
@@ -138,7 +151,8 @@ class Cache {
                     results.push({
                         lang: 'it',
                         filePath,
-                        url: `/subtitle/${file}` // URL relativo per il player Stremio
+                        url: `/subtitle/${file}`,
+                        isEncrypted: file.endsWith('.txt1')
                     });
                 } else {
                     await fs.unlink(filePath);
@@ -147,7 +161,7 @@ class Cache {
             
             return results;
         } catch (error) {
-            console.error('[cache] Error getting SRT files:', error);
+            console.error('[cache] Error getting subtitle files:', error);
             return [];
         }
     }
