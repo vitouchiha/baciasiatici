@@ -23,7 +23,6 @@ async function getAxiosHeaders() {
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
-    const epId = extractEpisodeNumericId(episodeId);
     const browser = await puppeteerExtra.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -42,7 +41,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
             }
         });
 
-        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${epId}`, {
+        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`, {
             waitUntil: 'networkidle2',
             timeout: 60000
         });
