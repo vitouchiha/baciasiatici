@@ -92,21 +92,32 @@ subtitleRouter.get('/:file', async (req, res) => {
     const ttl = 24 * 60 * 60 * 1000; // 24 ore
     
     try {
+        // Debug del percorso file
+        console.log(`[subtitle] Cerco il file in: ${filePath}`);
+        console.log(`[subtitle] La directory __dirname è: ${__dirname}`);
+        
+        // Verifica che la directory cache esista
+        const cacheDir = path.join(__dirname, 'cache');
+        try {
+            await fs.access(cacheDir);
+            console.log(`[subtitle] Directory cache esiste: ${cacheDir}`);
+        } catch (error) {
+            console.error(`[subtitle] Directory cache non trovata: ${cacheDir}`);
+            return res.status(500).send('Cache directory not found');
+        }
+
+        // Lista tutti i file nella cache per debug
+        const files = await fs.readdir(cacheDir);
+        console.log(`[subtitle] File nella cache (${files.length} totali):`);
+        for (const file of files) {
+            const stats = await fs.stat(path.join(cacheDir, file));
+            console.log(`[subtitle] - ${file} (${(stats.size / 1024).toFixed(2)} KB)`);
+        }
+
         // Verifica esistenza e validità del file
         const exists = await fs.access(filePath).then(() => true).catch(() => false);
         if (!exists) {
             console.error(`[subtitle] File non trovato: ${filePath}`);
-            
-            // Lista i file disponibili nella cache per debug
-            const cacheDir = path.join(__dirname, 'cache');
-            const files = await fs.readdir(cacheDir);
-            const italianSubs = files.filter(f => f.endsWith('.it.srt'));
-            console.log(`[subtitle] Sottotitoli italiani disponibili (${italianSubs.length}):`);
-            for (const file of italianSubs) {
-                const stats = await fs.stat(path.join(cacheDir, file));
-                const age = Date.now() - stats.mtime.getTime();
-                console.log(`[subtitle] - ${file} (${(stats.size / 1024).toFixed(2)} KB, età: ${(age / 3600000).toFixed(2)} ore)`);
-            }
             return res.status(404).send('Subtitle not found');
         }
 
@@ -120,8 +131,10 @@ subtitleRouter.get('/:file', async (req, res) => {
             return res.status(404).send('Subtitle expired');
         }
 
-        // Leggi e servi il file
+        // Leggi il file
+        console.log(`[subtitle] Lettura del file: ${filePath}`);
         const content = await fs.readFile(filePath, 'utf8');
+        console.log(`[subtitle] File letto, lunghezza: ${content.length} bytes`);
         
         // Verifica che il contenuto sia un SRT valido
         if (!content.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
@@ -130,15 +143,21 @@ subtitleRouter.get('/:file', async (req, res) => {
             return res.status(500).send('Invalid subtitle content');
         }
 
+        // Imposta gli header appropriati
         res.setHeader('Content-Type', 'application/x-subrip');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache lato client 24 ore
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Length', content.length);
+        
+        // Invia il file
         res.send(content);
 
         const duration = Date.now() - startTime;
         console.log(`[subtitle] Servito file: ${fileName} (${(stats.size / 1024).toFixed(2)} KB in ${duration}ms)`);
     } catch (error) {
         console.error(`[subtitle] Errore durante il serving di ${fileName}:`, error);
+        console.error(error.stack); // Log dello stack trace completo
         res.status(500).send('Error serving subtitle');
     }
 });
@@ -149,16 +168,55 @@ const options = {
     getRouter: () => {
         const router = express.Router();
         
-        // Aggiungiamo il supporto CORS
-        router.use(cors());
+        // Aggiungiamo il supporto CORS per tutti gli endpoint
+        router.use(cors({
+            origin: '*',
+            methods: ['GET', 'HEAD'],
+            allowedHeaders: ['Content-Type', 'Accept', 'Range'],
+            exposedHeaders: ['Content-Length', 'Content-Range']
+        }));
+
+        // Log di tutte le richieste
+        router.use((req, res, next) => {
+            console.log(`[Router] ${req.method} ${req.path} da ${req.ip}`);
+            next();
+        });
         
-        // Montiamo il router dei sottotitoli
+        // Montiamo il router dei sottotitoli PRIMA degli endpoint Stremio
         router.use('/subtitle', subtitleRouter);
         
         // Aggiungiamo gli endpoint standard dell'addon
         router.get('/manifest.json', (req, res) => {
             res.setHeader('Content-Type', 'application/json');
             res.send(addonInterface.manifest);
+        });
+
+        // Endpoint per verificare lo stato della cache dei sottotitoli
+        router.get('/subtitle/status', async (req, res) => {
+            try {
+                const cacheDir = path.join(__dirname, 'cache');
+                const files = await fs.readdir(cacheDir);
+                const stats = [];
+                
+                for (const file of files) {
+                    if (file.endsWith('.it.srt')) {
+                        const filePath = path.join(cacheDir, file);
+                        const fileStats = await fs.stat(filePath);
+                        stats.push({
+                            file,
+                            size: fileStats.size,
+                            age: (Date.now() - fileStats.mtime.getTime()) / 3600000
+                        });
+                    }
+                }
+                
+                res.json({
+                    total: stats.length,
+                    files: stats
+                });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
         });
 
         router.get('/:resource/:type/:id.json', async (req, res) => {
@@ -187,6 +245,12 @@ const options = {
                 console.error('[ERROR]', err.message);
                 res.status(500).send({ error: err.message });
             }
+        });
+
+        // Gestione 404 per richieste non gestite
+        router.use((req, res) => {
+            console.log(`[404] Richiesta non gestita: ${req.method} ${req.path}`);
+            res.status(404).send('Not Found');
         });
 
         // Aggiungiamo il middleware di gestione errori
