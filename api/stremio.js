@@ -21,6 +21,14 @@ async function getAxiosHeaders() {
     };
 }
 
+// Funzione per verificare se un sottotitolo è in italiano
+function isItalianSubtitle(subtitle, url) {
+    return (subtitle.language || '').toLowerCase() === 'it' || 
+           (subtitle.label || '').toLowerCase() === 'italian' ||
+           (url || '').toLowerCase().includes('.it.srt') ||
+           (url || '').toLowerCase().includes('.it.txt1');
+}
+
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     const browser = await puppeteerExtra.launch({
@@ -87,19 +95,17 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 continue;
             }
 
+            // Verifica se il sottotitolo è in italiano
+            if (!isItalianSubtitle(s, subtitleUrl)) {
+                console.log(`[subtitles] Skipping non-Italian subtitle: ${subtitleUrl}`);
+                continue;
+            }
+
             try {
                 console.log(`[subtitles] Fetching from ${subtitleUrl}`);
                 const subResponse = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
                 const subBuffer = Buffer.from(subResponse.data);
-                const subText = subBuffer.toString('utf8').trim();                // Controlla se il sottotitolo è in italiano                const isItalian = (s.language || '').toLowerCase() === 'it' || 
-                                (s.label || '').toLowerCase() === 'italian' ||
-                                subtitleUrl.toLowerCase().includes('.it.srt') ||
-                                subtitleUrl.toLowerCase().includes('.it.txt1');
-
-                if (!isItalian) {
-                    console.log('[subtitles] Skipping non-Italian subtitle');
-                    continue;
-                }
+                const subText = subBuffer.toString('utf8').trim();
 
                 let text = null;
                 // Prova prima come SRT/WEBVTT
