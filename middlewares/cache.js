@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 
 class Cache {
-    constructor(ttl = 1 * 60 * 60 * 1000) { // 24 hours default TTL
+    constructor(ttl = 24 * 60 * 60 * 1000) { // 24 hours default TTL
         this.cacheDir = path.join(process.cwd(), 'cache');
         this.ttl = ttl;
         this.init();
@@ -74,17 +74,27 @@ class Cache {
         } catch (error) {
             return null;
         }
-    }
-
-    async setSRT(key, content, lang) {
+    }    async setSRT(key, content, lang) {
         const cacheKey = this.getCacheKey(key);
         const filePath = path.join(this.cacheDir, `${cacheKey}.${lang}.srt`);
 
         try {
-            await fs.writeFile(filePath, content);
+            // Verifica che il contenuto sia un SRT valido
+            if (!content || !content.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
+                console.error('Invalid SRT content:', content ? content.substring(0, 100) + '...' : 'empty');
+                return null;
+            }
+
+            // Normalizza i fine riga per evitare problemi di compatibilità
+            const normalizedContent = content.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
+            
+            await fs.writeFile(filePath, normalizedContent);
+            const stats = await fs.stat(filePath);
+            
+            console.log(`[Cache] Salvato sottotitolo: ${path.basename(filePath)} (${(stats.size / 1024).toFixed(2)} KB)`);
             return filePath;
         } catch (error) {
-            console.error('SRT cache write error:', error);
+            console.error(`[Cache] Errore durante il salvataggio del sottotitolo:`, error);
             return null;
         }
     }
