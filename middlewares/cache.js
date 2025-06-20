@@ -55,9 +55,7 @@ class Cache {
             console.error('Cache write error:', error);
             return false;
         }
-    }
-
-    async get(key) {
+    }    async get(key) {
         const cacheKey = this.getCacheKey(key);
         const filePath = path.join(this.cacheDir, cacheKey);
 
@@ -74,7 +72,9 @@ class Cache {
         } catch (error) {
             return null;
         }
-    }    async setSRT(key, content, lang) {
+    }
+
+    async setSRT(key, content, lang) {
         const cacheKey = this.getCacheKey(key);
         const filePath = path.join(this.cacheDir, `${cacheKey}.${lang}.srt`);
 
