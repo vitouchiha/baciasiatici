@@ -140,7 +140,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.2.6',
+    version: '1.2.5',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
@@ -721,3 +721,6 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         return { subtitles: [] };
     }
 });
+
+// Esporta il builder compilato per l'interfaccia addon
+module.exports = builder.getInterface();
