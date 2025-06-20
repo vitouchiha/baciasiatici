@@ -2,9 +2,11 @@ version: '3.8'
 services:
   baciasiatici-addon:
     build: .
-    container_name: kisfromasia
+    container_name: baciasiatici
     ports:
       - "3000:3000"
+    volumes:
+      - ./cache:/app/cache  # Montiamo la cartella cache per i sottotitoli
     env_file:
       - .env
     restart: unless-stopped
