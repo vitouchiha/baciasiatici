@@ -25,68 +25,114 @@ const addonInterface = require('./api/stremio');
 const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
-const fs = require('fs').promises;
-
-// Configura il server
-const PORT = process.env.PORT || 3000;
-
-// Abilita CORS per tutte le richieste
-app.use(cors());
 
 // Espone la cartella data
 app.use('/data', express.static(path.join(__dirname, 'data')));
 
-// Endpoint per i sottotitoli
-app.get('/subtitle/:file', async (req, res) => {
-    console.log(`[subtitles] Request for subtitle file: ${req.params.file}`);
-    const filePath = path.join(__dirname, 'cache', req.params.file);
-    
-    try {
-        const exists = await fs.access(filePath).then(() => true).catch(() => false);
-        if (!exists) {
-            console.error(`[subtitles] File not found: ${filePath}`);
-            return res.status(404).send('Subtitle not found');
-        }
-
-        res.setHeader('Content-Type', 'application/x-subrip');
-        const content = await fs.readFile(filePath, 'utf8');
-        res.send(content);
-        console.log(`[subtitles] Successfully served file: ${req.params.file}`);
-    } catch (error) {
-        console.error(`[subtitles] Error serving file ${filePath}:`, error);
-        res.status(500).send('Error serving subtitle');
-    }
-});
+app.use(cors());
 
 app.get('/manifest.json', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    res.send(addonInterface.manifest);
+    res.send(stremioInterface.manifest);
 });
 
-// Risorse catalog/meta/stream
+/*
+// 🔧 Manifest JSON
+app.get('/manifest.json', (req, res) => {
+  console.log('[Endpoint] GET /manifest.json');
+  res.setHeader('Content-Type', 'application/json');
+  res.json(addonInterface.manifest);
+
+});
+*/
+// 🔍 Risorse catalog/meta/stream
 app.get('/:resource/:type/:id.json', async (req, res) => {
-    console.log(`[Endpoint] GET /${req.params.resource}/${req.params.type}/${req.params.id}.json`);
-    const handler = addonInterface[req.params.resource];
-    if (!handler) {
-        console.error(`[Error] Handler not found for resource: ${req.params.resource}`);
-        res.status(404).json({ error: 'not found' });
-        return;
+  const { resource, type, id } = req.params;
+  const extra = req.query;
+
+  console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+
+  if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+        console.log(`[BLOCK] Stream generico bloccato per ${id}`);
+        return res.json({
+            streams: [{
+                title: 'Seleziona un episodio',
+                url: 'https://stremio.com',
+                isFree: true,
+                behaviorHints: { notWebReady: true, catalogNotSelectable: true }
+            }]
+        });
     }
 
     try {
-        const response = await handler(req.params);
+        const out = await stremioInterface.get({ resource, type, id, extra });
         res.setHeader('Content-Type', 'application/json');
-        res.send(response);
-    } catch (error) {
-        console.error(`[Error] ${error.message}`);
-        res.status(500).json({ error: 'internal error' });
+        res.send(out);
+    } catch (err) {
+        console.error('[ERROR]', err.message);
+        res.status(500).send({ error: err.message });
     }
 });
 
-// Error handling
+  /*
+  try {
+    // Blocca le richieste stream generiche
+    if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+      console.log(`[BLOCK] Ignorata richiesta stream generica per ${id}`);
+      return res.json({ streams: [] });
+    }
+
+    if (!['catalog', 'meta', 'stream'].includes(resource)) {
+      throw new Error(`Resource non supportata: ${resource}`);
+    }
+
+    const data = await addonInterface.get({ resource, type, id, extra });
+
+    if (!data || typeof data !== 'object') {
+      throw new Error('Risposta non valida dall\'addon');
+    }
+
+    console.log(`[Response] /${resource}/${type}/${id}.json OK`);
+    res.json(data);
+  } catch (err) {
+    console.error('[ERROR]', JSON.stringify({
+      error: err.message,
+      stack: err.stack,
+      params: req.params
+    }, null, 2));
+    res.status(500).send({ error: err.message });
+  }
+});
+*/
+
+// 🈂️ Route sottotitoli
+app.get('/subtitles/:seriesId/:episodeId/:lang.txt1', async (req, res) => {
+  const { seriesId, episodeId, lang } = req.params;
+  console.log(`[Endpoint] GET /subtitles/${seriesId}/${episodeId}/${lang}.srt`);
+  try {
+    if (!['en', 'it'].includes(lang.toLowerCase())) {
+      return res.status(404).send('Subtitle not available');
+    }
+
+    const subs = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
+    const sub = subs.find(s => s.lang && s.lang.toLowerCase() === lang.toLowerCase() && s.text);
+    if (!sub) {
+      return res.status(404).send('Subtitle not found');
+    }
+
+    const srtText = sub.text.replace(/^\uFEFF/, '').replace(/\r?\n/g, '\r\n');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(srtText);
+  } catch (err) {
+    console.error('[SUBTITLE ENDPOINT ERROR]', err);
+    res.status(500).send('Error retrieving subtitle');
+  }
+});
+
+// 🧱 Middleware errore
 app.use(errorHandler);
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[server] Addon active on port ${PORT}`);
-});
+// 🛰️ Avvio server
+const PORT = process.env.PORT || 3000;
+serveHTTP(addonInterface, { port: PORT });
+console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
