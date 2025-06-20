@@ -23,24 +23,36 @@ async function getAxiosHeaders() {
 
 // Funzione per verificare se un sottotitolo è in italiano
 function isItalianSubtitle(subtitle, url) {
-    return (subtitle.language || '').toLowerCase() === 'it' || 
+    return (subtitle.language || '').toLowerCase() === 'it' ||
            (subtitle.label || '').toLowerCase() === 'italian' ||
+           (subtitle.lang || '').toLowerCase() === 'it' ||
            (url || '').toLowerCase().includes('.it.srt') ||
-           (url || '').toLowerCase().includes('.it.txt1');
+           (url || '').toLowerCase().includes('/it/') ||
+           (url || '').toLowerCase().includes('italian');
 }
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
+    const cacheKey = `sub_${serieId}_${episodeId}`;
+    
+    // Controlla prima nella cache
+    const cachedSubs = await cache.getAllSRTFiles(cacheKey);
+    if (cachedSubs.length > 0) {
+        console.log(`[subtitles] Found ${cachedSubs.length} cached Italian subtitles`);
+        return cachedSubs;
+    }
+
+    console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);
     const browser = await puppeteerExtra.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
-    let subApiUrl = null;
+
     try {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
         
-        // Intercetta le richieste per trovare l'URL dei sottotitoli
+        let subApiUrl = null;
         page.on('request', request => {
             const url = request.url();
             if (!subApiUrl && url.includes('/api/Sub/')) {
@@ -61,32 +73,36 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
         }
 
         const headers = await getAxiosHeaders();
-        const response = await axios.get(subApiUrl, { responseType: 'arraybuffer', headers });
+        const response = await axios.get(subApiUrl, { 
+            responseType: 'arraybuffer', 
+            headers,
+            timeout: 10000
+        });
+        
         const buffer = Buffer.from(response.data);
         const asString = buffer.slice(0, 2000).toString('utf8').trim();
         
-        let arr;
+        let subtitleList;
         if (asString.startsWith('[')) {
-            arr = JSON.parse(asString);
+            subtitleList = JSON.parse(asString);
         } else if (asString.startsWith('{')) {
-            arr = [JSON.parse(asString)];
+            subtitleList = [JSON.parse(asString)];
         } else {
             console.warn('[subtitles] Response is not a subtitle list!');
             return [];
         }
 
-        console.log(`[subtitles] Found ${arr.length} subtitle tracks from API`);
-
+        console.log(`[subtitles] Found ${subtitleList.length} subtitle tracks from API`);
         const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
         const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
         const decodedSubs = [];
 
-        for (const s of arr) {
-            let subtitleUrl = s.src;
-            if (!subtitleUrl && s.GET && s.GET.host && s.GET.filename) {
-                subtitleUrl = `${s.GET.scheme || 'https'}://${s.GET.host}${s.GET.filename}`;
-                if (s.GET.query && s.GET.query.v) {
-                    subtitleUrl += `?v=${s.GET.query.v}`;
+        for (const sub of subtitleList) {
+            let subtitleUrl = sub.src;
+            if (!subtitleUrl && sub.GET && sub.GET.host && sub.GET.filename) {
+                subtitleUrl = `${sub.GET.scheme || 'https'}://${sub.GET.host}${sub.GET.filename}`;
+                if (sub.GET.query && sub.GET.query.v) {
+                    subtitleUrl += `?v=${sub.GET.query.v}`;
                 }
             }
             
@@ -96,42 +112,51 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
             }
 
             // Verifica se il sottotitolo è in italiano
-            if (!isItalianSubtitle(s, subtitleUrl)) {
+            if (!isItalianSubtitle(sub, subtitleUrl)) {
                 console.log(`[subtitles] Skipping non-Italian subtitle: ${subtitleUrl}`);
                 continue;
             }
 
             try {
-                console.log(`[subtitles] Fetching from ${subtitleUrl}`);
-                const subResponse = await axios.get(subtitleUrl, { responseType: 'arraybuffer' });
-                const subBuffer = Buffer.from(subResponse.data);
-                const subText = subBuffer.toString('utf8').trim();
-
-                let text = null;
-                // Prova prima come SRT/WEBVTT
-                if (subText.startsWith('1') || subText.startsWith('WEBVTT')) {
-                    text = decryptKisskhSubtitleFull(subText);
-                } 
-                // Se non è SRT/WEBVTT, prova come .txt1
-                else if (subBuffer.length > 32) {
-                    text = decryptKisskhSubtitleStatic(subBuffer, STATIC_KEY, STATIC_IV);
+                console.log(`[subtitles] Downloading Italian subtitle: ${subtitleUrl}`);
+                const subResponse = await axios.get(subtitleUrl, { 
+                    responseType: 'arraybuffer',
+                    headers,
+                    timeout: 10000
+                });
+                
+                let content;
+                if (subtitleUrl.includes('static=true')) {
+                    content = decryptKisskhSubtitleStatic(subResponse.data, STATIC_KEY, STATIC_IV);
+                } else {
+                    content = decryptKisskhSubtitleFull(subResponse.data);
                 }
 
-                if (text) {
-                    console.log('[subtitles] Successfully decrypted Italian subtitle');
+                if (!content || content.trim().length === 0) {
+                    console.warn('[subtitles] Empty subtitle content after decryption');
+                    continue;
+                }
+
+                // Salva il sottotitolo in cache
+                const savedPath = await cache.setSRT(cacheKey, content, 'it');
+                if (savedPath) {
                     decodedSubs.push({
-                        text,
-                        lang: 'it'
+                        lang: 'it',
+                        filePath: savedPath,
+                        url: `/subtitle/${path.basename(savedPath)}`
                     });
                 }
             } catch (error) {
                 console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
+                continue;
             }
         }
 
+        console.log(`[subtitles] Successfully processed ${decodedSubs.length} Italian subtitles`);
         return decodedSubs;
+
     } catch (error) {
-        console.error('[subtitles] Error:', error.message);
+        console.error('[subtitles] Error:', error);
         return [];
     } finally {
         await browser.close();
