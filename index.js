@@ -191,17 +191,72 @@ async function startServer() {
         });
 
         // Endpoint di test/stato
-        app.get('/status', (req, res) => {
-            res.json({
-                protocol: req.protocol,
-                baseUrl: `${req.protocol}://${req.get('host')}`,
-                headers: req.headers,
-                uptime: process.uptime(),
-                cache: {
-                    directory: path.join(__dirname, 'cache'),
-                    exists: fs.existsSync(path.join(__dirname, 'cache'))
+        app.get('/status', async (req, res) => {
+            try {
+                const cacheDir = path.join(__dirname, 'cache');
+                let cacheStats = { files: [], totalSize: 0, fileCount: 0 };
+                
+                // Verifica l'esistenza e lo stato della cache
+                try {
+                    const exists = await fs.access(cacheDir).then(() => true).catch(() => false);
+                    if (exists) {
+                        const files = await fs.readdir(cacheDir);
+                        for (const file of files) {
+                            const filePath = path.join(cacheDir, file);
+                            const stats = await fs.stat(filePath);
+                            cacheStats.files.push({
+                                name: file,
+                                size: stats.size,
+                                age: Date.now() - stats.mtime.getTime(),
+                                mtime: stats.mtime
+                            });
+                            cacheStats.totalSize += stats.size;
+                        }
+                        cacheStats.fileCount = files.length;
+                    }
+                } catch (error) {
+                    console.error('[status] Error getting cache stats:', error);
+                    cacheStats.error = error.message;
                 }
-            });
+
+                res.json({
+                    status: 'ok',
+                    uptime: {
+                        seconds: process.uptime(),
+                        formatted: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m ${Math.floor(process.uptime() % 60)}s`
+                    },
+                    memory: process.memoryUsage(),
+                    server: {
+                        protocol: req.protocol,
+                        baseUrl: `${req.protocol}://${req.get('host')}`,
+                        headers: req.headers,
+                        port: process.env.PORT || 3000,
+                        env: process.env.NODE_ENV || 'development'
+                    },
+                    cache: {
+                        directory: cacheDir,
+                        exists: await fs.access(cacheDir).then(() => true).catch(() => false),
+                        stats: {
+                            fileCount: cacheStats.fileCount,
+                            totalSizeBytes: cacheStats.totalSize,
+                            totalSizeMB: (cacheStats.totalSize / (1024 * 1024)).toFixed(2),
+                            files: cacheStats.files.map(f => ({
+                                name: f.name,
+                                sizeKB: (f.size / 1024).toFixed(2),
+                                ageHours: (f.age / (1000 * 60 * 60)).toFixed(2),
+                                lastModified: f.mtime
+                            }))
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('[status] Error in status endpoint:', error);
+                res.status(500).json({
+                    status: 'error',
+                    error: error.message,
+                    stack: error.stack
+                });
+            }
         });
 
         // Monta il router dei sottotitoli
