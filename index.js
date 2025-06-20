@@ -25,34 +25,49 @@ const addonInterface = require('./api/stremio');
 const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
+const fs = require('fs').promises;
 
 // Espone la cartella data
 app.use('/data', express.static(path.join(__dirname, 'data')));
 
 app.use(cors());
 
+// Endpoint per servire i sottotitoli dalla cache
+app.get('/subtitle/:file', async (req, res) => {
+    console.log(`[subtitle] Request for file: ${req.params.file}`);
+    const filePath = path.join(__dirname, 'cache', req.params.file);
+    
+    try {
+        const exists = await fs.access(filePath).then(() => true).catch(() => false);
+        if (!exists) {
+            console.error(`[subtitle] File not found: ${filePath}`);
+            return res.status(404).send('Subtitle not found');
+        }
+
+        const content = await fs.readFile(filePath, 'utf8');
+        res.setHeader('Content-Type', 'application/x-subrip');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(content);
+        console.log(`[subtitle] Successfully served file: ${req.params.file}`);
+    } catch (error) {
+        console.error(`[subtitle] Error serving file ${filePath}:`, error);
+        res.status(500).send('Error serving subtitle');
+    }
+});
+
 app.get('/manifest.json', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    res.send(stremioInterface.manifest);
+    res.send(addonInterface.manifest);
 });
 
-/*
-// 🔧 Manifest JSON
-app.get('/manifest.json', (req, res) => {
-  console.log('[Endpoint] GET /manifest.json');
-  res.setHeader('Content-Type', 'application/json');
-  res.json(addonInterface.manifest);
-
-});
-*/
 // 🔍 Risorse catalog/meta/stream
 app.get('/:resource/:type/:id.json', async (req, res) => {
-  const { resource, type, id } = req.params;
-  const extra = req.query;
+    const { resource, type, id } = req.params;
+    const extra = req.query;
 
-  console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+    console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
 
-  if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+    if (resource === 'stream' && type === 'series' && !id.includes(':')) {
         console.log(`[BLOCK] Stream generico bloccato per ${id}`);
         return res.json({
             streams: [{
@@ -65,7 +80,7 @@ app.get('/:resource/:type/:id.json', async (req, res) => {
     }
 
     try {
-        const out = await stremioInterface.get({ resource, type, id, extra });
+        const out = await addonInterface.get({ resource, type, id, extra });
         res.setHeader('Content-Type', 'application/json');
         res.send(out);
     } catch (err) {
@@ -73,37 +88,6 @@ app.get('/:resource/:type/:id.json', async (req, res) => {
         res.status(500).send({ error: err.message });
     }
 });
-
-  /*
-  try {
-    // Blocca le richieste stream generiche
-    if (resource === 'stream' && type === 'series' && !id.includes(':')) {
-      console.log(`[BLOCK] Ignorata richiesta stream generica per ${id}`);
-      return res.json({ streams: [] });
-    }
-
-    if (!['catalog', 'meta', 'stream'].includes(resource)) {
-      throw new Error(`Resource non supportata: ${resource}`);
-    }
-
-    const data = await addonInterface.get({ resource, type, id, extra });
-
-    if (!data || typeof data !== 'object') {
-      throw new Error('Risposta non valida dall\'addon');
-    }
-
-    console.log(`[Response] /${resource}/${type}/${id}.json OK`);
-    res.json(data);
-  } catch (err) {
-    console.error('[ERROR]', JSON.stringify({
-      error: err.message,
-      stack: err.stack,
-      params: req.params
-    }, null, 2));
-    res.status(500).send({ error: err.message });
-  }
-});
-*/
 
 // 🈂️ Route sottotitoli
 app.get('/subtitles/:seriesId/:episodeId/:lang.txt1', async (req, res) => {
@@ -134,5 +118,6 @@ app.use(errorHandler);
 
 // 🛰️ Avvio server
 const PORT = process.env.PORT || 3000;
-serveHTTP(addonInterface, { port: PORT });
-console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
+});
