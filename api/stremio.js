@@ -159,84 +159,157 @@ const builder = new addonBuilder({
 });
 
 // Handler del catalogo
-builder.defineCatalogHandler(({ type, id, extra }) => {
+builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
     console.log(`[CatalogHandler] Request catalog: type=${type}, id=${id}, extra=${JSON.stringify(extra)}`);
 
-    if (type !== 'series' || id !== 'kisskh') {
-        console.log(`[CatalogHandler] Ignoring request for type=${type}, id=${id}`);
-        return Promise.resolve({ metas: [] });
-    }
+    if (type !== 'series') return { metas: [] };
 
-    return kisskh.getCatalog({ 
-        page: 1, 
-        limit: 100,
-        search: extra.search || '' 
-    }).then(metas => {
+    const limit = parseInt(extra.limit) || 30;
+    const skip = parseInt(extra.skip) || 0;
+    const page = Math.floor(skip / limit) + 1;
+    const search = extra.search || '';
+
+    try {
+        console.log(`[CatalogHandler] Fetching page ${page} with limit ${limit}`);
+        const metas = await kisskh.getCatalog({ page, limit, search });
         console.log(`[CatalogHandler] Found ${metas.length} items`);
         return { metas };
-    }).catch(error => {
+    } catch (error) {
         console.error('[CatalogHandler] Error:', error);
         return { metas: [] };
-    });
+    }
 });
 
 // Handler per i meta
-builder.defineMetaHandler(({ type, id }) => {
+builder.defineMetaHandler(async ({ type, id }) => {
     console.log(`[MetaHandler] Request meta for id=${id}`);
     
-    if (type !== 'series' || !id.startsWith('kisskh_')) {
-        return Promise.resolve({ meta: null });
-    }
-
+    if (!id.startsWith('kisskh_')) return { meta: null };
+    
     const serieId = id.split('_')[1];
-    return kisskh.getMeta(serieId)
-        .then(meta => ({ meta }))
-        .catch(error => {
-            console.error('[MetaHandler] Error:', error);
-            return { meta: null };
-        });
+    
+    try {
+        const details = await kisskh.getSeriesDetails(serieId);
+        if (!details) return { meta: null };
+        
+        return {
+            meta: {
+                id: `kisskh_${details.id}`,
+                type: 'series',
+                name: details.title,
+                poster: details.thumbnail,
+                posterShape: 'poster',
+                description: details.description,
+                releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
+                videos: details.episodes.map(ep => ({
+                    id: ep.id,
+                    title: ep.title,
+                    season: ep.season,
+                    episode: ep.episode,
+                    released: details.releaseDate
+                }))
+            }
+        };
+    } catch (error) {
+        console.error('[MetaHandler] Error:', error);
+        return { meta: null };
+    }
 });
 
 // Handler per gli stream
-builder.defineStreamHandler(({ type, id }) => {
+builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[StreamHandler] Request stream for id=${id}`);
     
-    if (type !== 'series' || !id.startsWith('kisskh_')) {
-        return Promise.resolve({ streams: [] });
-    }
-
-    const [_, serieId, episodeId] = id.match(/kisskh_(\d+):(\d+)/) || [];
-    if (!serieId || !episodeId) {
-        return Promise.resolve({ streams: [] });
-    }
-
-    return kisskh.getStreams(serieId, episodeId)
-        .then(streams => ({ streams }))
-        .catch(error => {
-            console.error('[StreamHandler] Error:', error);
+    if (!id.startsWith('kisskh_')) return { streams: [] };
+    
+    const [serieId, episodeId] = id.split(':');
+    if (!serieId || !episodeId) return { streams: [] };
+    
+    const cleanSerieId = serieId.replace('kisskh_', '');
+    
+    try {
+        console.log(`[StreamHandler] Getting stream for serie ${cleanSerieId} episode ${episodeId}`);
+        const streamUrl = await kisskh.getEpisodeStream(cleanSerieId, episodeId);
+        
+        if (!streamUrl) {
+            console.log('[StreamHandler] No stream URL found');
             return { streams: [] };
-        });
+        }
+        
+        return {
+            streams: [{
+                url: streamUrl,
+                title: 'Stream',
+                behaviorHints: {
+                    notWebReady: false,
+                }
+            }]
+        };
+    } catch (error) {
+        console.error('[StreamHandler] Error:', error);
+        return { streams: [] };
+    }
 });
 
 // Handler per i sottotitoli
-builder.defineSubtitlesHandler(({ type, id }) => {
-    console.log(`[SubtitlesHandler] Request subtitles for id=${id}`);
+builder.defineSubtitlesHandler(async ({ type, id }) => {
+    if (!id.startsWith('kisskh_')) return { subtitles: [] };
     
-    if (type !== 'series' || !id.startsWith('kisskh_')) {
-        return Promise.resolve({ subtitles: [] });
-    }
+    const [serieId, episodeId] = id.split(':');
+    if (!serieId || !episodeId) return { subtitles: [] };
+    
+    const cleanSerieId = serieId.replace('kisskh_', '');
+    console.log(`[SubtitlesHandler] Fetching subtitles for serie ${cleanSerieId} episode ${episodeId}`);
+    
+    try {
+        // First check if we have cached subtitles
+        const processedSubs = [];
+        const cacheKey = `${cleanSerieId}_${episodeId}`;
+        const cachedSubs = await cache.getAllSRTFiles(cacheKey);
+        
+        if (cachedSubs && cachedSubs.length > 0) {
+            console.log(`[subtitles] Found ${cachedSubs.length} cached subtitles`);
+            for (const sub of cachedSubs) {
+                const fileName = path.basename(sub.filePath);
+                const subtitleUrl = `./subtitle/${fileName}`;
+                processedSubs.push({
+                    id: fileName,
+                    url: subtitleUrl,
+                    lang: 'it',
+                    format: 'srt'
+                });
+            }
+            return { subtitles: processedSubs };
+        }
 
-    const [_, serieId, episodeId] = id.match(/kisskh_(\d+):(\d+)/) || [];
-    if (!serieId || !episodeId) {
-        return Promise.resolve({ subtitles: [] });
-    }
+        // If no cached subs, fetch and process them
+        console.log('[subtitles] No cached subtitles, fetching from source');
+        const subs = await kisskh.getSubtitlesWithPuppeteer(cleanSerieId, episodeId);
+        
+        for (const sub of subs) {
+            if (!sub.text) continue;
+            
+            const hash = crypto.createHash('md5').update(`${cleanSerieId}_${episodeId}_${sub.text}`).digest('hex');
+            const fileName = `${hash}.it.srt`;
+            
+            const saved = await cache.setSRT(cacheKey, sub.text, 'it');
+            if (saved) {
+                const subtitleUrl = `./subtitle/${fileName}`;
+                processedSubs.push({
+                    id: fileName,
+                    url: subtitleUrl,
+                    lang: 'it',
+                    format: 'srt'
+                });
+            }
+        }
 
-    return kisskh.getSubtitlesWithPuppeteer(serieId, episodeId)
-        .then(subtitles => ({ subtitles }))
-        .catch(error => {
-            console.error('[SubtitlesHandler] Error:', error);
-            return { subtitles: [] };
-        });
+        console.log(`[subtitles] Successfully processed ${processedSubs.length} subtitles`);
+        return { subtitles: processedSubs };
+    } catch (error) {
+        console.error(`[subtitles] Error: ${error.message}`);
+        return { subtitles: [] };
+    }
 });
 
 // Esporta il builder compilato per l'interfaccia addon
