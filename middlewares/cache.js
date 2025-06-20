@@ -72,29 +72,48 @@ class Cache {
         } catch (error) {
             return null;
         }
-    }
-
-    async setSRT(key, content, lang) {
+    }    async setSRT(key, content, lang) {
         const cacheKey = this.getCacheKey(key);
-        const filePath = path.join(this.cacheDir, `${cacheKey}.${lang}.srt`);
+        const fileName = `${cacheKey}.${lang}.srt`;
+        const filePath = path.join(this.cacheDir, fileName);
 
         try {
+            // Verifica che la directory cache esista
+            await fs.access(this.cacheDir).catch(async () => {
+                console.log('[Cache] Directory cache non trovata, la creo:', this.cacheDir);
+                await fs.mkdir(this.cacheDir, { recursive: true });
+            });
+
             // Verifica che il contenuto sia un SRT valido
             if (!content || !content.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
-                console.error('Invalid SRT content:', content ? content.substring(0, 100) + '...' : 'empty');
+                console.error('[Cache] Contenuto SRT non valido:', content ? content.substring(0, 100) + '...' : 'vuoto');
                 return null;
             }
 
             // Normalizza i fine riga per evitare problemi di compatibilità
             const normalizedContent = content.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
             
+            // Salva il file
+            console.log(`[Cache] Salvataggio sottotitolo: ${fileName}`);
             await fs.writeFile(filePath, normalizedContent);
-            const stats = await fs.stat(filePath);
             
-            console.log(`[Cache] Salvato sottotitolo: ${path.basename(filePath)} (${(stats.size / 1024).toFixed(2)} KB)`);
+            // Verifica che il file sia stato salvato correttamente
+            const stats = await fs.stat(filePath);
+            console.log(`[Cache] Sottotitolo salvato: ${fileName} (${(stats.size / 1024).toFixed(2)} KB)`);
+            
+            // Verifica che il file sia leggibile
+            const testRead = await fs.readFile(filePath, 'utf8');
+            if (!testRead || testRead.length === 0) {
+                throw new Error('File saved but not readable');
+            }
+
             return filePath;
         } catch (error) {
-            console.error(`[Cache] Errore durante il salvataggio del sottotitolo:`, error);
+            console.error(`[Cache] Errore durante il salvataggio del sottotitolo ${fileName}:`, error);
+            // Prova a rimuovere il file se esiste
+            try {
+                await fs.unlink(filePath).catch(() => {});
+            } catch (e) {}
             return null;
         }
     }
