@@ -640,11 +640,12 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
             console.log(`[subtitles] Cache hit for ${id}, found ${cachedSubs.length} subtitles`);
             return {
                 subtitles: cachedSubs.map(sub => {
+                    // Usa path assoluto per il sottotitolo
                     const subtitleUrl = `/subtitle/${path.basename(sub.filePath)}`;
                     console.log(`[subtitles] Serving subtitle at: ${subtitleUrl}`);
                     return {
                         id: `${id}_${sub.lang}`,
-                        url: subtitleUrl,
+                        url: subtitleUrl,  // Il proxy Nginx gestirà correttamente questo path
                         lang: sub.lang
                     };
                 })
