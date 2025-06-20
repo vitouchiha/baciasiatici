@@ -5,7 +5,8 @@ const addonInterface = require('./api/stremio');
 const kisskh = require('./api/kisskh');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 
 // Funzione per determinare se una richiesta è HTTPS
 function isSecure(req) {
@@ -27,45 +28,70 @@ async function initializeCache() {
     const cacheDir = path.join(__dirname, 'cache');
     try {
         // Verifica se la directory esiste, altrimenti la crea
-        await fs.access(cacheDir).catch(async () => {
-            console.log('[Cache] Directory cache non trovata, la creo:', cacheDir);
-            await fs.mkdir(cacheDir, { recursive: true });
-        });
-
-        console.log('[Cache] Directory cache esistente:', cacheDir);
+        try {
+            await fsPromises.access(cacheDir, fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK);
+            console.log('[Cache] Directory cache esiste con i permessi corretti:', cacheDir);
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                console.log('[Cache] Directory cache non trovata, la creo:', cacheDir);
+                await fsPromises.mkdir(cacheDir, { recursive: true, mode: 0o755 });
+                // Verifica la creazione
+                await fsPromises.access(cacheDir, fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK);
+            } else {
+                throw new Error(`Problemi di permessi sulla directory cache: ${error.message}`);
+            }
+        }
         
         // Lista i file presenti e pulisci quelli scaduti
-        const files = await fs.readdir(cacheDir);
+        const files = await fsPromises.readdir(cacheDir);
         console.log(`[Cache] Trovati ${files.length} file nella cache:`);
         
         const now = Date.now();
         const ttl = 24 * 60 * 60 * 1000; // 24 ore
         let totalSize = 0;
         let expiredFiles = 0;
+        let validFiles = 0;
 
         for (const file of files) {
             const filePath = path.join(cacheDir, file);
             try {
-                const stats = await fs.stat(filePath);
+                // Verifica i permessi del file
+                await fsPromises.access(filePath, fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK);
+                
+                const stats = await fsPromises.stat(filePath);
                 const age = now - stats.mtime.getTime();
                 
-                if (age > ttl) {
-                    await fs.unlink(filePath);
+                if (!file.match(/^[a-f0-9]+\.it\.srt$/i)) {
+                    console.log(`[Cache] Rimuovo file non valido: ${file}`);
+                    await fsPromises.unlink(filePath);
+                    expiredFiles++;
+                } else if (age > ttl) {
+                    await fsPromises.unlink(filePath);
                     console.log(`[Cache] Rimosso file scaduto: ${file} (età: ${(age / 3600000).toFixed(2)} ore)`);
                     expiredFiles++;
                 } else {
                     totalSize += stats.size;
+                    validFiles++;
                     const hours = age / 3600000;
                     console.log(`[Cache] - ${file} (${(stats.size / 1024).toFixed(2)} KB, età: ${hours.toFixed(2)} ore)`);
                 }
             } catch (error) {
                 console.error(`[Cache] Errore durante la verifica del file ${file}:`, error.message);
+                // Tenta di rimuovere i file problematici
+                try {
+                    await fsPromises.unlink(filePath);
+                    console.log(`[Cache] Rimosso file problematico: ${file}`);
+                    expiredFiles++;
+                } catch (e) {
+                    console.error(`[Cache] Impossibile rimuovere file problematico ${file}:`, e.message);
+                }
             }
         }
 
-        console.log(`[Cache] Stato: ${(totalSize / 1024 / 1024).toFixed(2)} MB totali, ${expiredFiles} file scaduti rimossi`);
+        console.log(`[Cache] Stato: ${(totalSize / 1024 / 1024).toFixed(2)} MB totali, ${validFiles} file validi, ${expiredFiles} file rimossi`);
     } catch (error) {
         console.error('[Cache] Errore durante l\'inizializzazione della cache:', error);
+        process.exit(1); // Exit if we can't set up the cache properly
     }
 }
 
@@ -94,7 +120,7 @@ subtitleRouter.get('/:file', async (req, res) => {
         // Verifica che la directory cache esista
         const cacheDir = path.join(__dirname, 'cache');
         try {
-            await fs.access(cacheDir);
+            await fsPromises.access(cacheDir);
             console.log(`[subtitle] Directory cache esiste: ${cacheDir}`);
         } catch (error) {
             console.error(`[subtitle] Directory cache non trovata: ${cacheDir}`);
@@ -102,17 +128,17 @@ subtitleRouter.get('/:file', async (req, res) => {
         }
 
         // Lista tutti i file nella cache per debug
-        const files = await fs.readdir(cacheDir);
+        const files = await fsPromises.readdir(cacheDir);
         console.log(`[subtitle] File nella cache (${files.length} totali):`);
         for (const file of files) {
-            const stats = await fs.stat(path.join(cacheDir, file));
+            const stats = await fsPromises.stat(path.join(cacheDir, file));
             console.log(`[subtitle] - ${file} (${(stats.size / 1024).toFixed(2)} KB)`);
         }
 
         // Verifica esistenza e validità del file
         let exists = true;
         try {
-            await fs.access(filePath);
+            await fsPromises.access(filePath);
         } catch {
             exists = false;
         }
@@ -123,24 +149,24 @@ subtitleRouter.get('/:file', async (req, res) => {
         }
 
         // Verifica età del file
-        const stats = await fs.stat(filePath);
+        const stats = await fsPromises.stat(filePath);
         const fileAge = Date.now() - stats.mtime.getTime();
         
         if (fileAge > ttl) {
             console.log(`[subtitle] File scaduto, lo rimuovo: ${fileName} (età: ${(fileAge / 3600000).toFixed(2)} ore)`);
-            await fs.unlink(filePath);
+            await fsPromises.unlink(filePath);
             return res.status(404).send('Subtitle expired');
         }
 
         // Leggi il file
         console.log(`[subtitle] Lettura del file: ${filePath}`);
-        const content = await fs.readFile(filePath, 'utf8');
+        const content = await fsPromises.readFile(filePath, 'utf8');
         console.log(`[subtitle] File letto, lunghezza: ${content.length} bytes`);
         
         // Verifica che il contenuto sia un SRT valido
         if (!content.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
             console.error(`[subtitle] File corrotto: ${fileName}`);
-            await fs.unlink(filePath);
+            await fsPromises.unlink(filePath);
             return res.status(500).send('Invalid subtitle content');
         }
 
@@ -202,12 +228,12 @@ async function startServer() {
                 let cacheFiles = [];
                 
                 try {
-                    await fs.access(cacheDir);
+                    await fsPromises.access(cacheDir);
                     cacheExists = true;
-                    const files = await fs.readdir(cacheDir);
+                    const files = await fsPromises.readdir(cacheDir);
                     for (const file of files) {
                         if (file.endsWith('.it.srt')) {
-                            const stats = await fs.stat(path.join(cacheDir, file));
+                            const stats = await fsPromises.stat(path.join(cacheDir, file));
                             cacheFiles.push({
                                 name: file,
                                 size: stats.size,
@@ -287,10 +313,17 @@ async function startServer() {
                 
                 // Se è una richiesta di sottotitoli, assicurati che gli URL siano corretti
                 if (resource === 'subtitles' && result.subtitles) {
-                    result.subtitles = result.subtitles.map(sub => ({
-                        ...sub,
-                        url: `${getSubtitleBaseUrl(req)}/${path.basename(sub.url)}`
-                    }));
+                    result.subtitles = result.subtitles.map(sub => {
+                        // Estrai solo il nome del file dall'URL originale
+                        const fileName = sub.url && sub.url.startsWith('./subtitle/') ? 
+                            sub.url.substring('./subtitle/'.length) : 
+                            path.basename(sub.url);
+                            
+                        return {
+                            ...sub,
+                            url: `${getSubtitleBaseUrl(req)}/${fileName}`
+                        };
+                    });
                 }
 
                 res.setHeader('Content-Type', 'application/json');
