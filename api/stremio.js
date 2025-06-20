@@ -144,27 +144,35 @@ const builder = new addonBuilder({
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
     resources: [
-        { name: 'catalog', types: ['series'] },
-        { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
-        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'], idPattern: 'kisskh_\\d+:\\d+' },
-        { name: 'subtitles', types: ['series'], idPrefixes: ['kisskh_'] }
+        'catalog',
+        'meta',
+        'stream',
+        'subtitles'
     ],
+    types: ['series'],
+    catalogs: [
+        {
+            type: 'series',
+            id: 'kisskh',
+            name: 'KissKH Series',
+            extra: [
+                {
+                    name: 'search',
+                    isRequired: false
+                },
+                {
+                    name: 'skip',
+                    isRequired: false
+                }
+            ]
+        }
+    ],
+    idPrefixes: ['kisskh_'],
     behaviorHints: {
         configurable: true,
         configurationRequired: false,
-        p2p: false
-    },
-    types: ['series'],
-    catalogs: [{
-        type: 'series',
-        id: 'kisskh',
-        name: 'K-Drama',
-        extra: [
-            { name: 'search', isRequired: false },
-            { name: 'skip', isRequired: false },
-            { name: 'limit', isRequired: false }
-        ]
-    }]
+        adult: false
+    }
 });
 
 const seriesDetailsCache = new Map();
