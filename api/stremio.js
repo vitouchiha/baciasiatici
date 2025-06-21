@@ -36,8 +36,8 @@ function isItalianSubtitle(subtitle, url) {
 // Funzione per verificare se il contenuto è un SRT valido
 function isValidSRT(content) {
     if (!content) return false;
-    const text = content.toString('utf8').trim();
-    return text.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/);
+    const text = typeof content === 'string' ? content : content.toString('utf8');
+    return text.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/);
 }
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
@@ -88,6 +88,11 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
             timeout: 10000
         });
         
+        if (!response.data || !Buffer.isBuffer(response.data)) {
+            console.error('[subtitles] Invalid API response');
+            return [];
+        }
+
         const buffer = Buffer.from(response.data);
         const asString = buffer.toString('utf8');
         
@@ -139,72 +144,61 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                     timeout: 10000
                 });
 
-                if (!subResponse.data || subResponse.data.length === 0) {
-                    console.warn('[subtitles] Empty response from subtitle URL');
+                if (!subResponse.data || !Buffer.isBuffer(subResponse.data)) {
+                    console.warn('[subtitles] Empty or invalid response from subtitle URL');
                     continue;
                 }
 
-                // Determina se il file è criptato e come
-                const isStaticEncrypted = subtitleUrl.includes('static=true');
-                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
                 let content = Buffer.from(subResponse.data);
-
-                try {
-                    // Se è un file .txt1, salvalo come tale
-                    if (isTxt1) {
-                        content = content.toString('utf8');
-                    }
-                    // Se è un file criptato con static=true, decrittalo
-                    else if (isStaticEncrypted) {
-                        content = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
-                    }
-                    // Se è un file criptato normale, decrittalo
-                    else if (!isTxt1 && content[0] !== 0x31) { // Check if it's not a plain SRT (starting with "1")
-                        try {
+                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
+                
+                // Se è un .txt1, mantieni il contenuto criptato
+                if (isTxt1) {
+                    content = content.toString('utf8');
+                } 
+                // Altrimenti prova a decrittare o usare come plain text
+                else {
+                    try {
+                        if (subtitleUrl.includes('static=true')) {
+                            content = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
+                        } else if (content[0] !== 0x31) { // not starting with "1"
                             content = decryptKisskhSubtitleFull(content);
-                        } catch (e) {
-                            // Se la decrittazione fallisce, prova a usarlo come testo normale
-                            const plainText = content.toString('utf8');
-                            if (isValidSRT(plainText)) {
-                                content = plainText;
-                            } else {
-                                throw e; // Se non è un SRT valido, rilancia l'errore
-                            }
+                        } else {
+                            content = content.toString('utf8');
                         }
-                    } else {
-                        content = content.toString('utf8'); // File SRT normale
-                    }
 
-                    // Verifica che il contenuto sia valido
-                    if (!content || content.trim().length === 0) {
-                        console.warn('[subtitles] Empty subtitle content after processing');
+                        // Verifica che sia un SRT valido
+                        if (!isValidSRT(content)) {
+                            console.warn('[subtitles] Invalid SRT format after decryption');
+                            continue;
+                        }
+                    } catch (error) {
+                        console.error('[subtitles] Decryption failed:', error);
                         continue;
                     }
+                }
 
-                    // Per i file non .txt1, verifica che sia un SRT valido
-                    if (!isTxt1 && !isValidSRT(content)) {
-                        console.warn('[subtitles] Invalid SRT format after processing');
-                        continue;
-                    }
-
-                    // Salva nella cache con l'estensione appropriata
-                    const savedPath = await cache.setSRT(cacheKey, content, 'it', isTxt1);
-                    if (savedPath) {
-                        const fileName = path.basename(savedPath);
-                        console.log(`[subtitles] Generated URL for subtitle: /subtitle/${fileName}`);
-                        decodedSubs.push({
-                            lang: 'it',
-                            filePath: savedPath,
-                            url: `/subtitle/${fileName}`,
-                            isEncrypted: isTxt1
-                        });
-                    }
-                } catch (error) {
-                    console.error(`[subtitles] Error processing content for ${subtitleUrl}:`, error.message);
+                if (!content || (typeof content === 'string' && content.trim().length === 0)) {
+                    console.warn('[subtitles] Empty content after processing');
                     continue;
+                }
+
+                // Salva nella cache
+                const savedPath = await cache.setSRT(cacheKey, content, 'it', isTxt1);
+                if (savedPath) {
+                    const fileName = path.basename(savedPath);
+                    console.log(`[subtitles] Generated URL for subtitle: /subtitle/${fileName}`);
+                    decodedSubs.push({
+                        lang: 'it',
+                        filePath: savedPath,
+                        url: `/subtitle/${fileName}`,
+                        isEncrypted: isTxt1
+                    });
+                } else {
+                    console.warn('[subtitles] Failed to save subtitle to cache');
                 }
             } catch (error) {
-                console.error(`[subtitles] Error downloading subtitle ${subtitleUrl}:`, error.message);
+                console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
                 continue;
             }
         }
@@ -216,7 +210,9 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
         console.error('[subtitles] Error:', error);
         return [];
     } finally {
-        await browser.close();
+        if (browser) {
+            await browser.close().catch(console.error);
+        }
     }
 }
 
