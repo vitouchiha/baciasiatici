@@ -82,15 +82,20 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
         });
         
         const buffer = Buffer.from(response.data);
-        const asString = buffer.slice(0, 2000).toString('utf8').trim();
+        const asString = buffer.toString('utf8');
         
         let subtitleList;
-        if (asString.startsWith('[')) {
-            subtitleList = JSON.parse(asString);
-        } else if (asString.startsWith('{')) {
-            subtitleList = [JSON.parse(asString)];
-        } else {
-            console.warn('[subtitles] Response is not a subtitle list!');
+        try {
+            if (asString.startsWith('[')) {
+                subtitleList = JSON.parse(asString);
+            } else if (asString.startsWith('{')) {
+                subtitleList = [JSON.parse(asString)];
+            } else {
+                console.warn('[subtitles] Response is not a subtitle list!');
+                return [];
+            }
+        } catch (error) {
+            console.error('[subtitles] Error parsing subtitle list:', error);
             return [];
         }
 
@@ -127,14 +132,28 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                     timeout: 10000
                 });
 
-                // Se l'URL termina con .txt1, salva il contenuto criptato
-                const isEncrypted = subtitleUrl.toLowerCase().endsWith('.txt1');
-                let content = Buffer.from(subResponse.data).toString('utf8');
-                
-                if (!isEncrypted && subtitleUrl.includes('static=true')) {
-                    content = decryptKisskhSubtitleStatic(subResponse.data, STATIC_KEY, STATIC_IV);
-                } else if (!isEncrypted) {
-                    content = decryptKisskhSubtitleFull(subResponse.data);
+                // Determina se il file è criptato e come
+                const isStaticEncrypted = subtitleUrl.includes('static=true');
+                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
+                let content = Buffer.from(subResponse.data);
+
+                // Se è un file .txt1, salvalo come tale
+                if (isTxt1) {
+                    content = content.toString('utf8');
+                }
+                // Se è un file criptato con static=true, decrittalo
+                else if (isStaticEncrypted) {
+                    content = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
+                }
+                // Se è un file criptato normale, decrittalo
+                else if (!isTxt1 && content[0] !== 0x31) { // Check if it's not a plain SRT (starting with "1")
+                    try {
+                        content = decryptKisskhSubtitleFull(content);
+                    } catch (e) {
+                        content = content.toString('utf8'); // Se la decrittazione fallisce, prova a usarlo come testo normale
+                    }
+                } else {
+                    content = content.toString('utf8'); // File SRT normale
                 }
 
                 if (!content || content.trim().length === 0) {
@@ -142,14 +161,15 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                     continue;
                 }
 
-                // Salva il sottotitolo in cache
-                const savedPath = await cache.setSRT(cacheKey, content, 'it', isEncrypted);
+                // Salva nella cache con l'estensione appropriata
+                const extension = isTxt1 ? 'txt1' : 'srt';
+                const savedPath = await cache.setSRT(cacheKey, content, 'it', isTxt1);
                 if (savedPath) {
                     decodedSubs.push({
                         lang: 'it',
                         filePath: savedPath,
                         url: `/subtitle/${path.basename(savedPath)}`,
-                        isEncrypted
+                        isEncrypted: isTxt1
                     });
                 }
             } catch (error) {
