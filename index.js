@@ -21,100 +21,6 @@ const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
 const path = require('path');
 const fs = require('fs').promises;
-const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./api/sub_decrypter');
-
-// Funzione per servire i sottotitoli
-async function serveSubtitle(req, res) {
-    try {
-        const match = req.url.match(/\/subtitle\/(.*?\.(?:srt|txt1))$/);
-        if (!match) {
-            console.log(`[subtitle] Not a subtitle request: ${req.url}`);
-            return false;
-        }
-
-        const file = match[1];
-        console.log(`[subtitle] Processing request for file: ${file}`);
-        console.log(`[subtitle] Full URL: ${req.url}`);
-        console.log(`[subtitle] Request headers:`, req.headers);
-        
-        const filePath = path.join(process.cwd(), 'cache', file);
-        console.log(`[subtitle] Looking for file at: ${filePath}`);
-        
-        const exists = await fs.access(filePath).then(() => true).catch(() => false);
-        if (!exists) {
-            console.error(`[subtitle] File not found: ${filePath}`);
-            res.writeHead(404);
-            res.end('Subtitle not found');
-            return true;
-        }
-
-        // Leggi il contenuto del file
-        const content = await fs.readFile(filePath);
-        let finalContent;
-
-        // Se è un file .txt1, decripta il contenuto
-        if (file.endsWith('.txt1')) {
-            console.log('[subtitle] Processing .txt1 subtitle');
-            try {
-                const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
-                const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
-                
-                const contentStr = content.toString('utf8');
-                if (contentStr.includes('static=true')) {
-                    finalContent = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
-                } else {
-                    finalContent = decryptKisskhSubtitleFull(content);
-                }
-            } catch (error) {
-                console.error('[subtitle] Decryption error:', error);
-                res.writeHead(500);
-                res.end('Error decrypting subtitle');
-                return true;
-            }
-        } else {
-            finalContent = content.toString('utf8');
-        }
-
-        if (!finalContent || finalContent.trim().length === 0) {
-            console.error('[subtitle] Empty content after processing');
-            res.writeHead(500);
-            res.end('Invalid subtitle content');
-            return true;
-        }
-
-        // Verifica che il contenuto sia un SRT valido
-        if (!finalContent.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
-            console.error('[subtitle] Invalid SRT format');
-            res.writeHead(500);
-            res.end('Invalid subtitle format');
-            return true;
-        }
-        
-        // Imposta gli headers appropriati e CORS
-        res.writeHead(200, {
-            'Content-Type': 'application/x-subrip',
-            'Content-Disposition': `inline; filename="${file.replace('.txt1', '.srt')}"`,
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
-            'Cache-Control': 'public, max-age=3600'
-        });
-        
-        // Invia il contenuto
-        res.end(finalContent);
-        console.log(`[subtitle] Successfully served file: ${file}`);
-        return true;
-    } catch (error) {
-        console.error('[subtitle] Unexpected error:', error);
-        try {
-            res.writeHead(500);
-            res.end('Internal server error');
-        } catch (e) {
-            console.error('[subtitle] Error sending error response:', e);
-        }
-        return true;
-    }
-}
 
 // Funzione per verificare la cartella cache
 async function checkCacheFolder() {
@@ -152,37 +58,6 @@ async function checkCacheFolder() {
     }
 }
 
-// Creiamo un server usando serveHTTP di Stremio
-const pathToLog = (url) => {
-    const parts = url.split('?')[0].split('/');
-    return parts.join('/');
-};
-
-const serverHandler = async (req, res) => {
-    // Log dettagliato per ogni richiesta
-    console.log('=== INCOMING REQUEST ===');
-    console.log(`[Server] ${new Date().toISOString()}`);
-    console.log(`[Server] Method: ${req.method}`);
-    console.log(`[Server] URL: ${req.url}`);
-    console.log(`[Server] Headers:`, req.headers);
-    console.log(`[Server] Remote Address: ${req.socket.remoteAddress}`);
-    
-    // Prova prima a servire i sottotitoli
-    try {
-        const isSubtitle = await serveSubtitle(req, res);
-        if (!isSubtitle) {
-            // Se non è una richiesta di sottotitoli, passa il controllo a Stremio
-            console.log('[Server] Passando il controllo a Stremio');
-            return false;
-        }
-        console.log('[Server] Sottotitolo servito con successo');
-        return true;
-    } catch (error) {
-        console.error('[Server] Errore nella gestione della richiesta:', error);
-        return false;
-    }
-};
-
 const options = {
     port: process.env.PORT || 3000,
     logger: {
@@ -197,8 +72,8 @@ async function initServer() {
         // Verifica la cartella cache prima di avviare il server
         await checkCacheFolder();
 
-        // Avvia il server usando serveHTTP di Stremio e il nostro handler per i sottotitoli
-        serveHTTP(addonInterface, { ...options, beforeMiddleware: serverHandler });
+        // Avvia il server usando serveHTTP di Stremio
+        serveHTTP(addonInterface, options);
     } catch (error) {
         console.error('[Server] Errore durante l\'inizializzazione:', error);
         process.exit(1);
