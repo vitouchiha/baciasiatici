@@ -54,29 +54,45 @@ app.get('/subtitle/:file', async (req, res) => {
         }
 
         // Leggi il contenuto del file
-        const content = await fs.readFile(filePath, 'utf8');
-        let finalContent = content;
+        const content = await fs.readFile(filePath);
+        let finalContent;
 
         // Se è un file .txt1, decripta il contenuto
         if (file.endsWith('.txt1')) {
-            console.log('[subtitle] Decrypting .txt1 subtitle');
+            console.log('[subtitle] Processing .txt1 subtitle');
             try {
                 const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
                 const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
                 
-                if (content.includes('static=true')) {
-                    finalContent = decryptKisskhSubtitleStatic(Buffer.from(content), STATIC_KEY, STATIC_IV);
+                const contentStr = content.toString('utf8');
+                if (contentStr.includes('static=true')) {
+                    finalContent = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
                 } else {
-                    finalContent = decryptKisskhSubtitleFull(Buffer.from(content));
-                }
-
-                if (!finalContent || finalContent.trim().length === 0) {
-                    throw new Error('Decryption produced empty content');
+                    try {
+                        finalContent = decryptKisskhSubtitleFull(content);
+                    } catch (e) {
+                        // Se la decrittazione fallisce, prova a usare il contenuto come testo normale
+                        finalContent = contentStr;
+                    }
                 }
             } catch (error) {
                 console.error('[subtitle] Decryption error:', error);
                 return res.status(500).send('Error decrypting subtitle');
             }
+        } else {
+            // Per i file .srt, usa il contenuto così com'è
+            finalContent = content.toString('utf8');
+        }
+
+        if (!finalContent || finalContent.trim().length === 0) {
+            console.error('[subtitle] Empty content after processing');
+            return res.status(500).send('Invalid subtitle content');
+        }
+
+        // Verifica che il contenuto sia un SRT valido
+        if (!finalContent.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
+            console.error('[subtitle] Invalid SRT format');
+            return res.status(500).send('Invalid subtitle format');
         }
         
         // Imposta gli headers appropriati
