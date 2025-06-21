@@ -28,15 +28,27 @@ const path = require('path');
 const fs = require('fs').promises;
 const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./api/sub_decrypter');
 
+// Funzione per ottenere il dominio base dalla richiesta
+function getBaseUrl(req) {
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    return `${proto}://${host}`;
+}
+
 // Espone la cartella data
 app.use('/data', express.static(path.join(__dirname, 'data')));
 
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'HEAD'],
+    allowedHeaders: ['Content-Type', 'Accept'],
+    credentials: true
+}));
 
 // Endpoint per servire i sottotitoli dalla cache
 app.get('/subtitle/:file', async (req, res) => {
     const file = req.params.file;
-    console.log(`[subtitle] Request for file: ${file}`);
+    console.log(`[subtitle] Request for file: ${file} from ${getBaseUrl(req)}`);
     
     // Verifica che il file richiesto sia un sottotitolo
     if (!file.endsWith('.srt') && !file.endsWith('.txt1')) {
@@ -99,6 +111,7 @@ app.get('/subtitle/:file', async (req, res) => {
         res.setHeader('Content-Type', 'application/x-subrip');
         res.setHeader('Content-Disposition', `inline; filename="${file.replace('.txt1', '.srt')}"`);
         res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD');
         res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache per 1 ora
         
         // Invia il contenuto
