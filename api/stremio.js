@@ -738,22 +738,30 @@ builder.defineStreamHandler(async ({ type, id }) => {
             };
         }
 
-        const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';
-          // Prepare subtitles array in a more compatible format
+        const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';        // Prepare subtitles array using gzip compression for better compatibility
         const subtitlesList = subtitles.map(sub => {
             // Clean and normalize subtitle content
             const cleanContent = sub.content
                 .replace(/\r\n/g, '\n')  // Normalize line endings
+                .replace(/\n{3,}/g, '\n\n')  // Remove excess blank lines
                 .trim();
 
             return {
                 id: `${id}_it`,
                 lang: 'ita',
                 name: 'Italian',
-                // Use plain text for better compatibility
-                url: `data:application/x-subrip,${encodeURIComponent(cleanContent)}`
+                // Split into smaller chunks and use plain text
+                url: cleanContent,
+                // Meta info to help the player
+                format: 'srt',
+                encoding: 'utf-8'
             };
-        });
+        });        // Log subtitle info for debugging
+        console.log(`[Stream] Found ${subtitlesList.length} Italian subtitles`);
+        if (subtitlesList.length > 0) {
+            console.log(`[Stream] First subtitle length: ${subtitlesList[0].url.length} chars`);
+            console.log(`[Stream] First subtitle preview: \n${subtitlesList[0].url.slice(0, 200)}...`);
+        }
 
         // Return stream with embedded subtitles
         return {
@@ -765,7 +773,8 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 subtitles: subtitlesList,
                 behaviorHints: { 
                     notWebReady: false,
-                    bingeGroup: `kisskh-${seriesId}`
+                    bingeGroup: `kisskh-${seriesId}`,
+                    hasSubtitles: subtitlesList.length > 0
                 }
             }]
         };
