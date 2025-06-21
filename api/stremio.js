@@ -756,12 +756,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 format: 'srt',
                 encoding: 'utf-8'
             };
-        });        // Log subtitle info for debugging
-        console.log(`[Stream] Found ${subtitlesList.length} Italian subtitles`);
-        if (subtitlesList.length > 0) {
-            console.log(`[Stream] First subtitle length: ${subtitlesList[0].url.length} chars`);
-            console.log(`[Stream] First subtitle preview: \n${subtitlesList[0].url.slice(0, 200)}...`);
-        }
+        });
 
         // Return stream with embedded subtitles
         return {
@@ -773,8 +768,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 subtitles: subtitlesList,
                 behaviorHints: { 
                     notWebReady: false,
-                    bingeGroup: `kisskh-${seriesId}`,
-                    hasSubtitles: subtitlesList.length > 0
+                    bingeGroup: `kisskh-${seriesId}`
                 }
             }]
         };
