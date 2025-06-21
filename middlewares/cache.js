@@ -94,7 +94,6 @@ class Cache {
         const filePath = path.join(this.cacheDir, fileName);
 
         try {
-            // Assicuriamoci che il contenuto sia una stringa o un Buffer
             const dataToWrite = Buffer.isBuffer(content) ? content : Buffer.from(content);
             await fs.writeFile(filePath, dataToWrite);
             console.log(`[cache] Saved subtitle: ${fileName}`);
@@ -164,7 +163,6 @@ class Cache {
                         results.push({
                             lang: 'it',
                             filePath,
-                            fileName: file,
                             isEncrypted: file.endsWith('.txt1')
                         });
                     } else {
