@@ -28,16 +28,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./api/sub_decrypter');
 
-// Funzione per ottenere il dominio base dalla richiesta
-function getBaseUrl(req) {
-    const proto = req.headers['x-forwarded-proto'] || 'http';
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    return `${proto}://${host}`;
-}
-
-// Espone la cartella data
-app.use('/data', express.static(path.join(__dirname, 'data')));
-
+// Middleware CORS aggiornato per supportare il reverse proxy
 app.use(cors({
     origin: '*',
     methods: ['GET', 'HEAD'],
@@ -45,10 +36,13 @@ app.use(cors({
     credentials: true
 }));
 
+// Espone la cartella data
+app.use('/data', express.static(path.join(__dirname, 'data')));
+
 // Endpoint per servire i sottotitoli dalla cache
 app.get('/subtitle/:file', async (req, res) => {
     const file = req.params.file;
-    console.log(`[subtitle] Request for file: ${file} from ${getBaseUrl(req)}`);
+    console.log(`[subtitle] Request for file: ${file}`);
     
     // Verifica che il file richiesto sia un sottotitolo
     if (!file.endsWith('.srt') && !file.endsWith('.txt1')) {
@@ -130,12 +124,12 @@ app.get('/manifest.json', (req, res) => {
 
 // 🔍 Risorse catalog/meta/stream
 app.get('/:resource/:type/:id.json', async (req, res) => {
-  const { resource, type, id } = req.params;
-  const extra = req.query;
+    const { resource, type, id } = req.params;
+    const extra = req.query;
 
-  console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+    console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
 
-  if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+    if (resource === 'stream' && type === 'series' && !id.includes(':')) {
         console.log(`[BLOCK] Stream generico bloccato per ${id}`);
         return res.json({
             streams: [{
@@ -157,34 +151,24 @@ app.get('/:resource/:type/:id.json', async (req, res) => {
     }
 });
 
-// 🈂️ Route sottotitoli
-app.get('/subtitles/:seriesId/:episodeId/:lang.txt1', async (req, res) => {
-  const { seriesId, episodeId, lang } = req.params;
-  console.log(`[Endpoint] GET /subtitles/${seriesId}/${episodeId}/${lang}.srt`);
-  try {
-    if (!['en', 'it'].includes(lang.toLowerCase())) {
-      return res.status(404).send('Subtitle not available');
-    }
-
-    const subs = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
-    const sub = subs.find(s => s.lang && s.lang.toLowerCase() === lang.toLowerCase() && s.text);
-    if (!sub) {
-      return res.status(404).send('Subtitle not found');
-    }
-
-    const srtText = sub.text.replace(/^\uFEFF/, '').replace(/\r?\n/g, '\r\n');
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.send(srtText);
-  } catch (err) {
-    console.error('[SUBTITLE ENDPOINT ERROR]', err);
-    res.status(500).send('Error retrieving subtitle');
-  }
+// Endpoint di test per verificare il routing
+app.get('/subtitle-test', (req, res) => {
+    console.log('[TEST] Subtitle test endpoint reached');
+    console.log('[TEST] Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('[TEST] URL:', req.url);
+    console.log('[TEST] Original URL:', req.originalUrl);
+    console.log('[TEST] Base URL:', req.baseUrl);
+    res.send('Subtitle test endpoint working. Check the logs.');
 });
 
-// 🧱 Middleware errore
+// Gestione degli errori
 app.use(errorHandler);
 
-// 🛰️ Avvio server
-const PORT = process.env.PORT || 3000;
-serveHTTP(addonInterface, { port: PORT });
-console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
+// Prima di serveHTTP, aggiungiamo un log per tutte le richieste
+app.use((req, res, next) => {
+    console.log(`[Request] ${req.method} ${req.originalUrl} from ${req.headers.host}`);
+    next();
+});
+
+// Avvia il server
+serveHTTP(addonInterface, { port: process.env.PORT || 3000 });
