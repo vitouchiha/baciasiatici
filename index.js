@@ -179,8 +179,19 @@ const options = {
     }
 };
 
-// Verifica la cartella cache prima di avviare il server
-await checkCacheFolder();
+// Funzione di inizializzazione asincrona
+async function initServer() {
+    try {
+        // Verifica la cartella cache prima di avviare il server
+        await checkCacheFolder();
 
-// Avvia il server usando serveHTTP di Stremio e il nostro handler per i sottotitoli
-serveHTTP(addonInterface, { ...options, beforeMiddleware: serverHandler });
+        // Avvia il server usando serveHTTP di Stremio e il nostro handler per i sottotitoli
+        serveHTTP(addonInterface, { ...options, beforeMiddleware: serverHandler });
+    } catch (error) {
+        console.error('[Server] Errore durante l\'inizializzazione:', error);
+        process.exit(1);
+    }
+}
+
+// Avvia il server
+initServer();
