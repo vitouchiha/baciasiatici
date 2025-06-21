@@ -77,6 +77,11 @@ class Cache {
     }
 
     async setSRT(key, content, lang, encrypted = false) {
+        if (!content) {
+            console.error('[cache] Attempt to save empty or undefined content');
+            return null;
+        }
+
         if (lang.toLowerCase() !== 'it') {
             console.log(`[cache] Skipping non-Italian subtitle for key: ${key}`);
             return null;
@@ -88,8 +93,10 @@ class Cache {
         const filePath = path.join(this.cacheDir, `${cacheKey}.${extension}`);
 
         try {
-            await fs.writeFile(filePath, content);
-            console.log(`[cache] Saved Italian subtitle: ${path.basename(filePath)}`);
+            // Assicuriamoci che il contenuto sia una stringa o un Buffer
+            const dataToWrite = Buffer.isBuffer(content) ? content : Buffer.from(content);
+            await fs.writeFile(filePath, dataToWrite);
+            console.log(`[cache] Saved subtitle to: ${filePath}`);
             return filePath;
         } catch (error) {
             console.error('[cache] Subtitle write error:', error);
@@ -123,10 +130,15 @@ class Cache {
                 return null;
             }
 
-            const content = await fs.readFile(filePath, 'utf8');
+            const content = await fs.readFile(filePath);
             const isEncrypted = filePath.endsWith('.txt1');
-            return { content, filePath, isEncrypted };
+            return { 
+                content: content.toString('utf8'),
+                filePath,
+                isEncrypted
+            };
         } catch (error) {
+            console.error('[cache] Error reading subtitle:', error);
             return null;
         }
     }
@@ -145,17 +157,22 @@ class Cache {
             
             for (const file of subtitleFiles) {
                 const filePath = path.join(this.cacheDir, file);
-                const stats = await fs.stat(filePath);
-                
-                if (Date.now() - stats.mtime.getTime() <= this.ttl) {
-                    results.push({
-                        lang: 'it',
-                        filePath,
-                        url: `/subtitle/${file}`,
-                        isEncrypted: file.endsWith('.txt1')
-                    });
-                } else {
-                    await fs.unlink(filePath);
+                try {
+                    const stats = await fs.stat(filePath);
+                    
+                    if (Date.now() - stats.mtime.getTime() <= this.ttl) {
+                        results.push({
+                            lang: 'it',
+                            filePath,
+                            url: `/subtitle/${file}`,
+                            isEncrypted: file.endsWith('.txt1')
+                        });
+                    } else {
+                        await fs.unlink(filePath);
+                    }
+                } catch (error) {
+                    console.error(`[cache] Error processing file ${file}:`, error);
+                    continue;
                 }
             }
             
