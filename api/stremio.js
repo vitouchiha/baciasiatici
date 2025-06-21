@@ -7,7 +7,19 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const axios = require('axios');
 const cache = require('../middlewares/cache');
 const path = require('path');
+const url = require('url');
 puppeteerExtra.use(StealthPlugin());
+
+// Funzione per ottenere il dominio base dalla richiesta
+function getBaseUrl(req) {
+    if (!req) return '';
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    return `${proto}://${host}`;
+}
+
+const BASE_URL = process.env.BASE_URL || '';
+const ADDON_URL = process.env.ADDON_URL || '';
 
 // Funzione helper per ottenere gli headers
 async function getAxiosHeaders() {
@@ -40,8 +52,23 @@ function isValidSRT(content) {
     return text.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/);
 }
 
+// Funzione per generare l'URL corretto per i sottotitoli
+function getSubtitleUrl(fileName) {
+    // Se abbiamo un BASE_URL configurato, usalo
+    if (BASE_URL) {
+        return `${BASE_URL}/subtitle/${fileName}`;
+    }
+    // Se abbiamo un ADDON_URL configurato, estraiamo il base path
+    if (ADDON_URL) {
+        const url = new URL(ADDON_URL);
+        return `${url.pathname}/subtitle/${fileName}`.replace(/\/+/g, '/');
+    }
+    // Fallback all'URL relativo
+    return `/subtitle/${fileName}`;
+}
+
 // Funzione per recuperare i sottotitoli usando Puppeteer
-async function getSubtitlesWithPuppeteer(serieId, episodeId) {
+async function getSubtitlesWithPuppeteer(serieId, episodeId, req) {
     const cacheKey = `sub_${serieId}_${episodeId}`;
     
     // Controlla prima nella cache
@@ -187,11 +214,14 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 const savedPath = await cache.setSRT(cacheKey, content, 'it', isTxt1);
                 if (savedPath) {
                     const fileName = path.basename(savedPath);
-                    console.log(`[subtitles] Generated URL for subtitle: /subtitle/${fileName}`);
+                    // Generiamo l'URL con il dominio corretto
+                    const baseUrl = getBaseUrl(req);
+                    const subtitleUrl = baseUrl ? `${baseUrl}/subtitle/${fileName}` : `/subtitle/${fileName}`;
+                    console.log(`[subtitles] Generated URL for subtitle: ${subtitleUrl}`);
                     decodedSubs.push({
                         lang: 'it',
                         filePath: savedPath,
-                        url: `/subtitle/${fileName}`,
+                        url: subtitleUrl,
                         isEncrypted: isTxt1
                     });
                 } else {
