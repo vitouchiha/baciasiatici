@@ -6,7 +6,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./cache:/app/cache  # Montiamo la cartella cache per i sottotitoli
+      - ./cache:/app/cache  # Cache per i sottotitoli decriptati
     env_file:
       - .env
     restart: unless-stopped
