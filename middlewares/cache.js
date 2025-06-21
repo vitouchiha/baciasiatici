@@ -90,13 +90,14 @@ class Cache {
         const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
         // Se il contenuto è criptato, salva come .txt1, altrimenti come .srt
         const extension = encrypted ? 'txt1' : 'srt';
-        const filePath = path.join(this.cacheDir, `${cacheKey}.${extension}`);
+        const fileName = `${cacheKey}.${extension}`;
+        const filePath = path.join(this.cacheDir, fileName);
 
         try {
             // Assicuriamoci che il contenuto sia una stringa o un Buffer
             const dataToWrite = Buffer.isBuffer(content) ? content : Buffer.from(content);
             await fs.writeFile(filePath, dataToWrite);
-            console.log(`[cache] Saved subtitle to: ${filePath}`);
+            console.log(`[cache] Saved subtitle: ${fileName}`);
             return filePath;
         } catch (error) {
             console.error('[cache] Subtitle write error:', error);
@@ -111,16 +112,14 @@ class Cache {
 
         const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
         // Prova prima .txt1, poi .srt
-        let filePath = path.join(this.cacheDir, `${cacheKey}.txt1`);
+        const fileName = `${cacheKey}.txt1`;
+        const filePath = path.join(this.cacheDir, fileName);
         let exists = await fs.access(filePath).then(() => true).catch(() => false);
         
         if (!exists) {
-            filePath = path.join(this.cacheDir, `${cacheKey}.srt`);
-            exists = await fs.access(filePath).then(() => true).catch(() => false);
-        }
-
-        if (!exists) {
-            return null;
+            const srtPath = path.join(this.cacheDir, `${cacheKey}.srt`);
+            exists = await fs.access(srtPath).then(() => true).catch(() => false);
+            if (!exists) return null;
         }
 
         try {
@@ -135,6 +134,7 @@ class Cache {
             return { 
                 content: content.toString('utf8'),
                 filePath,
+                fileName: path.basename(filePath),
                 isEncrypted
             };
         } catch (error) {
@@ -164,7 +164,7 @@ class Cache {
                         results.push({
                             lang: 'it',
                             filePath,
-                            url: `/subtitle/${file}`,
+                            fileName: file,
                             isEncrypted: file.endsWith('.txt1')
                         });
                     } else {
