@@ -7,6 +7,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const axios = require('axios');
 const cache = require('../middlewares/cache');
 const path = require('path');
+const fs = require('fs').promises;
 puppeteerExtra.use(StealthPlugin());
 
 // Ottieni l'URL base per i sottotitoli
@@ -91,10 +92,28 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     const cachedSubs = await cache.getAllSRTFiles(cacheKey);
     if (cachedSubs.length > 0) {
         console.log(`[subtitles] Found ${cachedSubs.length} cached Italian subtitles`);
-        return cachedSubs.map(sub => ({
-            ...sub,
-            url: `/subtitle/${path.basename(sub.filePath)}` // URL relativo
-        }));
+        const results = [];
+        for (const sub of cachedSubs) {
+            try {
+                const content = await fs.promises.readFile(sub.filePath, 'utf8');
+                if (sub.isEncrypted) {
+                    const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
+                    const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
+                    results.push({
+                        content: decryptKisskhSubtitleFull(content),
+                        lang: 'it'
+                    });
+                } else {
+                    results.push({
+                        content: content,
+                        lang: 'it'
+                    });
+                }
+            } catch (error) {
+                console.error(`[subtitles] Error reading cached subtitle: ${error.message}`);
+            }
+        }
+        return results;
     }
 
     console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);
@@ -198,52 +217,32 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 let content = Buffer.from(subResponse.data);
                 const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
                 
-                // Se è un .txt1, mantieni il contenuto criptato
-                if (isTxt1) {
-                    content = content.toString('utf8');
-                } 
-                // Altrimenti prova a decrittare o usare come plain text
-                else {
+                // Decripta o converti il contenuto
+                if (isTxt1 || content.toString('utf8', 0, 100).includes('encrypted')) {
                     try {
-                        if (subtitleUrl.includes('static=true')) {
-                            content = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
-                        } else if (content[0] !== 0x31) { // not starting with "1"
-                            content = decryptKisskhSubtitleFull(content);
-                        } else {
-                            content = content.toString('utf8');
-                        }
-
-                        // Verifica che sia un SRT valido
-                        if (!isValidSRT(content)) {
-                            console.warn('[subtitles] Invalid SRT format after decryption');
-                            continue;
-                        }
+                        content = decryptKisskhSubtitleFull(content.toString('utf8'));
                     } catch (error) {
                         console.error('[subtitles] Decryption failed:', error);
                         continue;
                     }
+                } else {
+                    content = content.toString('utf8');
                 }
 
-                if (!content || (typeof content === 'string' && content.trim().length === 0)) {
-                    console.warn('[subtitles] Empty content after processing');
+                // Verifica che sia un SRT valido
+                if (!content.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
+                    console.warn('[subtitles] Invalid SRT format after decryption');
                     continue;
                 }
 
-                // Salva nella cache
-                const savedPath = await cache.setSRT(cacheKey, content, 'it', isTxt1);
-                if (savedPath) {
-                    const fileName = path.basename(savedPath);
-                    const subtitleUrl = `/subtitle/${fileName}`; // URL relativo
-                    console.log(`[subtitles] Generated URL for subtitle: ${subtitleUrl}`);
-                    decodedSubs.push({
-                        lang: 'it',
-                        filePath: savedPath,
-                        url: subtitleUrl,
-                        isEncrypted: isTxt1
-                    });
-                } else {
-                    console.warn('[subtitles] Failed to save subtitle to cache');
-                }
+                // Salva nella cache per usi futuri
+                await cache.setSRT(cacheKey, content, 'it', false);
+
+                // Aggiungi ai risultati
+                decodedSubs.push({
+                    content: content,
+                    lang: 'it'
+                });
             } catch (error) {
                 console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
                 continue;
@@ -263,48 +262,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     }
 }
 
-const builder = new addonBuilder({
-    id: 'com.kisskh.addon',
-    version: '1.2.5',
-    name: 'KissKH Addon',
-    description: 'Asian content',
-    resources: [
-        { name: 'catalog', types: ['series'] },
-        { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
-        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'], idPattern: 'kisskh_\\d+:\\d+' },
-        { name: 'subtitles', types: ['series'], idPrefixes: ['kisskh_'] }
-    ],
-    types: ['series'],
-    catalogs: [{
-        type: 'series',
-        id: 'kisskh',
-        name: 'K-Drama',
-        extra: [
-            { name: 'search', isRequired: false },
-            { name: 'skip', isRequired: false },
-            { name: 'limit', isRequired: false }
-        ]
-    }]
-});
-
-const seriesDetailsCache = new Map();
-const streamCache = new Map();
-
-async function getCachedSeriesDetails(seriesId) {
-    if (seriesDetailsCache.has(seriesId)) {
-        const cached = seriesDetailsCache.get(seriesId);
-        if (Date.now() - cached.timestamp < 2 * 60 * 60 * 1000) {
-            console.log(`[Cache] getSeriesDetails hit per ${seriesId}`);
-            return cached.data;
-        } else {
-            seriesDetailsCache.delete(seriesId);
-        }
-    }
-    const data = await kisskh.getSeriesDetails(seriesId);
-    seriesDetailsCache.set(seriesId, { data, timestamp: Date.now() });
-    return data;
-}
-
+// Funzione per estrarre lo stream URL
 async function extractStreamFromIframe(page) {
     try {
         const iframes = await page.$$('iframe');
@@ -376,6 +334,7 @@ async function extractStreamFromIframe(page) {
     return null;
 }
 
+// Funzione per risolvere l'URL dello stream
 async function resolveEpisodeStreamUrl(seriesId, episodeId) {
     const cacheKey = `${seriesId}_${episodeId}`;
     if (streamCache.has(cacheKey)) {
@@ -603,6 +562,34 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
     }
 }
 
+const builder = new addonBuilder({
+    id: 'com.kisskh.addon',
+    version: '1.3.0',
+    name: 'KissKH Addon',
+    description: 'Asian content',
+    resources: [
+        { name: 'catalog', types: ['series'] },
+        { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
+        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'] }
+    ],
+    types: ['series'],
+    catalogs: [{
+        type: 'series',
+        id: 'kisskh',
+        name: 'K-Drama',
+        extra: [
+            { name: 'search', isRequired: false },
+            { name: 'skip', isRequired: false },
+            { name: 'limit', isRequired: false }
+        ]
+    }]
+});
+
+// Cache per i dettagli delle serie e degli stream
+const seriesDetailsCache = new Map();
+const streamCache = new Map();
+
+// Handler per il catalogo
 builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
     console.log(`[CatalogHandler] Request catalog: type=${type}, id=${id}, extra=${JSON.stringify(extra)}`);
 
@@ -616,6 +603,7 @@ builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
     return { metas };
 });
 
+// Handler per i metadata
 builder.defineMetaHandler(async ({ type, id }) => {
     console.log(`[MetaHandler] Request meta for id=${id}`);
     if (type !== 'series') return { meta: null };
@@ -676,6 +664,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
     return { meta };
 });
 
+// Handler per gli stream
 builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[StreamHandler] Request stream for id=${id}`);
     if (type !== 'series') return { streams: [] };
@@ -685,11 +674,11 @@ builder.defineStreamHandler(async ({ type, id }) => {
         return {
             streams: [{
                 title: '🔍 Select an episode to see the stream',
-                url: 'https://stremio.com', // Dummy but valid URL
+                url: 'https://stremio.com',
                 isFree: true,
                 behaviorHints: {
                     notWebReady: true,
-                    catalogNotSelectable: true
+                    bingeGroup: `kisskh-generic`
                 }
             }]
         };
@@ -700,27 +689,27 @@ builder.defineStreamHandler(async ({ type, id }) => {
     if (id.startsWith('kisskh_')) {
         const parts = id.split(':');
         if (parts.length === 2) {
-            // Normal case: "kisskh_123:456"
             seriesId = parts[0].replace('kisskh_', '');
             episodeId = parts[1];
         } else if (parts.length === 3) {
-            // Anomalous case: "kisskh_123:kisskh_123:456"
             seriesId = parts[0].replace('kisskh_', '');
             episodeId = parts[2];
         } else {
-            // Fallback
             seriesId = id.replace('kisskh_', '').split(':')[0];
             episodeId = id.split(':').pop();
         }
     } else {
-        // Fallback for ID without prefix
         seriesId = id.split(':')[0];
         episodeId = id.split(':').pop();
     }
     console.log(`[StreamHandler] seriesId=${seriesId} episodeId=${episodeId}`);
 
     try {
-        const streamUrl = await resolveEpisodeStreamUrl(seriesId, episodeId);
+        // Get stream URL and subtitles in parallel
+        const [streamUrl, subtitles] = await Promise.all([
+            resolveEpisodeStreamUrl(seriesId, episodeId),
+            getSubtitlesWithPuppeteer(seriesId, episodeId)
+        ]);
 
         if (!streamUrl) {
             return {
@@ -734,13 +723,27 @@ builder.defineStreamHandler(async ({ type, id }) => {
         }
 
         const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';
+        
+        // Convert subtitles to the format expected by Stremio
+        const subtitlesList = subtitles.map(sub => ({
+            id: `${id}_it`,
+            lang: 'ita',
+            name: 'Italian',
+            url: `data:application/x-subrip;base64,${Buffer.from(sub.content).toString('base64')}`
+        }));
+
+        // Return stream with embedded subtitles
         return {
             streams: [{
                 title: '▶️ Episode Stream',
                 url: streamUrl,
                 isFree: true,
                 format,
-                behaviorHints: { notWebReady: false }
+                subtitles: subtitlesList,
+                behaviorHints: { 
+                    notWebReady: false,
+                    bingeGroup: `kisskh-${seriesId}`
+                }
             }]
         };
     } catch (e) {
@@ -756,112 +759,5 @@ builder.defineStreamHandler(async ({ type, id }) => {
     }
 });
 
-builder.defineSubtitlesHandler(async ({ type, id }) => {
-    console.log(`[subtitles] Request for ${type} ${id}`);
-    try {
-        // Check cache first
-        const cachedSubs = await cache.getAllSRTFiles(id);
-        if (cachedSubs.length > 0) {
-            console.log(`[subtitles] Cache hit for ${id}, found ${cachedSubs.length} subtitles`);
-            return {
-                subtitles: cachedSubs.map(sub => {
-                    // Usa path assoluto per il sottotitolo
-                    const subtitleUrl = `/subtitle/${path.basename(sub.filePath)}`;
-                    console.log(`[subtitles] Serving subtitle at: ${subtitleUrl}`);
-                    return {
-                        id: `${id}_${sub.lang}`,
-                        url: subtitleUrl,  // Il proxy Nginx gestirà correttamente questo path
-                        lang: sub.lang
-                    };
-                })
-            };
-        }
-
-        const [seriesId, episodeId] = id.replace('kisskh_', '').split(':');
-        
-        // Prima prova con il metodo diretto
-        const headers = await getAxiosHeaders();
-        const subUrl = `https://kisskh.co/api/DramaList/Episode/${episodeId}/Subtitle`;
-        console.log(`[subtitles] Trying direct API at ${subUrl}`);
-        
-        let processedSubs = [];
-        
-        try {
-            const { data: subtitleData } = await axios.get(subUrl, { headers });
-            if (subtitleData && subtitleData.length > 0) {
-                // Filtra solo i sottotitoli in italiano
-                const italianSubs = subtitleData.filter(sub => 
-                    isItalianSubtitle(sub, sub.src)
-                );
-
-                console.log(`[subtitles] Found ${italianSubs.length} Italian subtitles`);
-
-                for (const sub of italianSubs) {
-                    if (!sub.src) continue;
-                    const { data: encryptedContent } = await axios.get(sub.src, { headers });
-                    const decryptedContent = decryptKisskhSubtitleFull(encryptedContent);
-                    if (decryptedContent) {
-                        await cache.setSRT(id, decryptedContent, 'it');
-                        const cacheKey = cache.getCacheKey(`${id}_it`);
-                        const subtitleUrl = `/subtitle/${cacheKey}.srt`;
-                        console.log(`[subtitles] Generated URL for subtitle: ${subtitleUrl}`);
-                        processedSubs.push({
-                            id: `${id}_it`,
-                            url: subtitleUrl,
-                            lang: 'it'
-                        });
-                    }
-                }
-            }
-        } catch (error) {
-            console.log(`[subtitles] Direct API failed, trying Puppeteer method: ${error.message}`);
-        }
-
-        // Se il metodo diretto fallisce, prova con Puppeteer
-        if (processedSubs.length === 0) {
-            console.log(`[subtitles] Trying Puppeteer method`);
-            const puppeteerSubs = await getSubtitlesWithPuppeteer(seriesId, episodeId);
-            
-            for (const sub of puppeteerSubs) {
-                await cache.setSRT(id, sub.text, 'it');
-                const cacheKey = cache.getCacheKey(`${id}_it`);
-                const subtitleUrl = `/subtitle/${cacheKey}.srt`;
-                console.log(`[subtitles] Generated URL for subtitle: ${subtitleUrl}`);
-                processedSubs.push({
-                    id: `${id}_it`,
-                    url: subtitleUrl,
-                    lang: 'it'
-                });
-            }
-        }
-
-        console.log(`[subtitles] Successfully processed ${processedSubs.length} subtitles`);
-        return { subtitles: processedSubs };
-    } catch (error) {
-        console.error(`[subtitles] Error: ${error.message}`);
-        return { subtitles: [] };
-    }
-});
-
-function vttToSrt(vttText) {
-    // Se il testo inizia già con un numero, potrebbe essere già in formato SRT
-    if (/^\d+\s*\n\d{2}:\d{2}:\d{2},\d{3}\s*-->/.test(vttText)) {
-        // console.log('[vttToSrt] Il testo è già in formato SRT, lo restituisco così com'è');
-        return vttText;
-    }
-
-    // Remove WEBVTT header
-    let srt = vttText.replace(/^WEBVTT[\s\S]*?\n\n/, '');
-
-    // Convert timestamps (00:00:00.000 --> 00:00:00.000)
-    srt = srt.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2');
-
-    // Add sequential numbers for each subtitle block
-    let counter = 1;
-    srt = srt.replace(/\n\n/g, () => `\n${counter++}\n`);
-
-    return srt;
-}
-
-
+// Esporta l'interfaccia dell'addon
 module.exports = builder.getInterface();
