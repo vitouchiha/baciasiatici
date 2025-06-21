@@ -589,6 +589,22 @@ const builder = new addonBuilder({
 const seriesDetailsCache = new Map();
 const streamCache = new Map();
 
+// Funzione per ottenere i dettagli della serie dalla cache o da API
+async function getCachedSeriesDetails(seriesId) {
+    if (seriesDetailsCache.has(seriesId)) {
+        const cached = seriesDetailsCache.get(seriesId);
+        if (Date.now() - cached.timestamp < 2 * 60 * 60 * 1000) {
+            console.log(`[Cache] getSeriesDetails hit per ${seriesId}`);
+            return cached.data;
+        } else {
+            seriesDetailsCache.delete(seriesId);
+        }
+    }
+    const data = await kisskh.getSeriesDetails(seriesId);
+    seriesDetailsCache.set(seriesId, { data, timestamp: Date.now() });
+    return data;
+}
+
 // Handler per il catalogo
 builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
     console.log(`[CatalogHandler] Request catalog: type=${type}, id=${id}, extra=${JSON.stringify(extra)}`);
