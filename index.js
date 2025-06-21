@@ -17,68 +17,122 @@ if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
   }
 }
 
+const express = require('express');
+const cors = require('cors');
+const app = express();
 const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
+const kisskh = require('./api/kisskh');
+const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
-const fs = require('fs').promises;
 
-// Funzione per verificare la cartella cache
-async function checkCacheFolder() {
-    const cacheFolder = path.join(process.cwd(), 'cache');
+// Espone la cartella data
+app.use('/data', express.static(path.join(__dirname, 'data')));
+
+app.use(cors());
+
+app.get('/manifest.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(stremioInterface.manifest);
+});
+
+/*
+// 🔧 Manifest JSON
+app.get('/manifest.json', (req, res) => {
+  console.log('[Endpoint] GET /manifest.json');
+  res.setHeader('Content-Type', 'application/json');
+  res.json(addonInterface.manifest);
+
+});
+*/
+// 🔍 Risorse catalog/meta/stream
+app.get('/:resource/:type/:id.json', async (req, res) => {
+  const { resource, type, id } = req.params;
+  const extra = req.query;
+
+  console.log(`[Endpoint] GET /${resource}/${type}/${id}`);
+
+  if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+        console.log(`[BLOCK] Stream generico bloccato per ${id}`);
+        return res.json({
+            streams: [{
+                title: 'Seleziona un episodio',
+                url: 'https://stremio.com',
+                isFree: true,
+                behaviorHints: { notWebReady: true, catalogNotSelectable: true }
+            }]
+        });
+    }
+
     try {
-        // Verifica se la cartella cache esiste
-        await fs.access(cacheFolder);
-        console.log('[Cache] Cartella cache trovata:', cacheFolder);
-        
-        // Lista i file nella cartella cache
-        const files = await fs.readdir(cacheFolder);
-        const subtitleFiles = files.filter(f => f.endsWith('.srt') || f.endsWith('.txt1'));
-        
-        if (subtitleFiles.length > 0) {
-            console.log(`[Cache] Trovati ${subtitleFiles.length} file di sottotitoli in cache:`);
-            for (const file of subtitleFiles) {
-                const stats = await fs.stat(path.join(cacheFolder, file));
-                console.log(`[Cache] - ${file} (${(stats.size / 1024).toFixed(2)} KB)`);
-            }
-        } else {
-            console.log('[Cache] Nessun file di sottotitoli presente in cache');
-        }
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            console.log('[Cache] Cartella cache non trovata, verrà creata quando necessario');
-            try {
-                await fs.mkdir(cacheFolder, { recursive: true });
-                console.log('[Cache] Cartella cache creata:', cacheFolder);
-            } catch (mkdirError) {
-                console.error('[Cache] Errore nella creazione della cartella cache:', mkdirError);
-            }
-        } else {
-            console.error('[Cache] Errore nel controllo della cartella cache:', error);
-        }
+        const out = await stremioInterface.get({ resource, type, id, extra });
+        res.setHeader('Content-Type', 'application/json');
+        res.send(out);
+    } catch (err) {
+        console.error('[ERROR]', err.message);
+        res.status(500).send({ error: err.message });
     }
-}
+});
 
-const options = {
-    port: process.env.PORT || 3000,
-    logger: {
-        log: (msg) => console.log(`[Stremio] ${msg}`),
-        error: (msg) => console.error(`[Stremio] ${msg}`)
+  /*
+  try {
+    // Blocca le richieste stream generiche
+    if (resource === 'stream' && type === 'series' && !id.includes(':')) {
+      console.log(`[BLOCK] Ignorata richiesta stream generica per ${id}`);
+      return res.json({ streams: [] });
     }
-};
 
-// Funzione di inizializzazione asincrona
-async function initServer() {
-    try {
-        // Verifica la cartella cache prima di avviare il server
-        await checkCacheFolder();
-
-        // Avvia il server usando serveHTTP di Stremio
-        serveHTTP(addonInterface, options);
-    } catch (error) {
-        console.error('[Server] Errore durante l\'inizializzazione:', error);
-        process.exit(1);
+    if (!['catalog', 'meta', 'stream'].includes(resource)) {
+      throw new Error(`Resource non supportata: ${resource}`);
     }
-}
 
-// Avvia il server
-initServer();
+    const data = await addonInterface.get({ resource, type, id, extra });
+
+    if (!data || typeof data !== 'object') {
+      throw new Error('Risposta non valida dall\'addon');
+    }
+
+    console.log(`[Response] /${resource}/${type}/${id}.json OK`);
+    res.json(data);
+  } catch (err) {
+    console.error('[ERROR]', JSON.stringify({
+      error: err.message,
+      stack: err.stack,
+      params: req.params
+    }, null, 2));
+    res.status(500).send({ error: err.message });
+  }
+});
+*/
+
+// 🈂️ Route sottotitoli
+app.get('/subtitles/:seriesId/:episodeId/:lang.txt1', async (req, res) => {
+  const { seriesId, episodeId, lang } = req.params;
+  console.log(`[Endpoint] GET /subtitles/${seriesId}/${episodeId}/${lang}.srt`);
+  try {
+    if (!['en', 'it'].includes(lang.toLowerCase())) {
+      return res.status(404).send('Subtitle not available');
+    }
+
+    const subs = await kisskh.getSubtitlesWithPuppeteer(seriesId, episodeId);
+    const sub = subs.find(s => s.lang && s.lang.toLowerCase() === lang.toLowerCase() && s.text);
+    if (!sub) {
+      return res.status(404).send('Subtitle not found');
+    }
+
+    const srtText = sub.text.replace(/^\uFEFF/, '').replace(/\r?\n/g, '\r\n');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(srtText);
+  } catch (err) {
+    console.error('[SUBTITLE ENDPOINT ERROR]', err);
+    res.status(500).send('Error retrieving subtitle');
+  }
+});
+
+// 🧱 Middleware errore
+app.use(errorHandler);
+
+// 🛰️ Avvio server
+const PORT = process.env.PORT || 3000;
+serveHTTP(addonInterface, { port: PORT });
+console.log(`👉 Addon Stremio in ascolto su porta ${PORT}`);
