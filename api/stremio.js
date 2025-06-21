@@ -739,14 +739,21 @@ builder.defineStreamHandler(async ({ type, id }) => {
         }
 
         const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';
-        
-        // Convert subtitles to the format expected by Stremio
-        const subtitlesList = subtitles.map(sub => ({
-            id: `${id}_it`,
-            lang: 'ita',
-            name: 'Italian',
-            url: `data:application/x-subrip;base64,${Buffer.from(sub.content).toString('base64')}`
-        }));
+          // Prepare subtitles array in a more compatible format
+        const subtitlesList = subtitles.map(sub => {
+            // Clean and normalize subtitle content
+            const cleanContent = sub.content
+                .replace(/\r\n/g, '\n')  // Normalize line endings
+                .trim();
+
+            return {
+                id: `${id}_it`,
+                lang: 'ita',
+                name: 'Italian',
+                // Use plain text for better compatibility
+                url: `data:application/x-subrip,${encodeURIComponent(cleanContent)}`
+            };
+        });
 
         // Return stream with embedded subtitles
         return {
