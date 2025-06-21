@@ -25,21 +25,21 @@ const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./ap
 
 // Funzione per servire i sottotitoli
 async function serveSubtitle(req, res) {
-    const match = req.url.match(/\/subtitle\/(.*?\.(?:srt|txt1))$/);
-    if (!match) {
-        console.log(`[subtitle] Not a subtitle request: ${req.url}`);
-        return false; // Non è una richiesta di sottotitoli
-    }
-
-    const file = match[1];
-    console.log(`[subtitle] Processing request for file: ${file}`);
-    console.log(`[subtitle] Full URL: ${req.url}`);
-    console.log(`[subtitle] Request headers:`, req.headers);
-    
-    const filePath = path.join(process.cwd(), 'cache', file);
-    console.log(`[subtitle] Looking for file at: ${filePath}`);
-    
     try {
+        const match = req.url.match(/\/subtitle\/(.*?\.(?:srt|txt1))$/);
+        if (!match) {
+            console.log(`[subtitle] Not a subtitle request: ${req.url}`);
+            return false;
+        }
+
+        const file = match[1];
+        console.log(`[subtitle] Processing request for file: ${file}`);
+        console.log(`[subtitle] Full URL: ${req.url}`);
+        console.log(`[subtitle] Request headers:`, req.headers);
+        
+        const filePath = path.join(process.cwd(), 'cache', file);
+        console.log(`[subtitle] Looking for file at: ${filePath}`);
+        
         const exists = await fs.access(filePath).then(() => true).catch(() => false);
         if (!exists) {
             console.error(`[subtitle] File not found: ${filePath}`);
@@ -63,12 +63,7 @@ async function serveSubtitle(req, res) {
                 if (contentStr.includes('static=true')) {
                     finalContent = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
                 } else {
-                    try {
-                        finalContent = decryptKisskhSubtitleFull(content);
-                    } catch (e) {
-                        // Se la decrittazione fallisce, prova a usare il contenuto come testo normale
-                        finalContent = contentStr;
-                    }
+                    finalContent = decryptKisskhSubtitleFull(content);
                 }
             } catch (error) {
                 console.error('[subtitle] Decryption error:', error);
@@ -77,7 +72,6 @@ async function serveSubtitle(req, res) {
                 return true;
             }
         } else {
-            // Per i file .srt, usa il contenuto così com'è
             finalContent = content.toString('utf8');
         }
 
@@ -96,12 +90,13 @@ async function serveSubtitle(req, res) {
             return true;
         }
         
-        // Imposta gli headers appropriati
+        // Imposta gli headers appropriati e CORS
         res.writeHead(200, {
             'Content-Type': 'application/x-subrip',
             'Content-Disposition': `inline; filename="${file.replace('.txt1', '.srt')}"`,
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
             'Cache-Control': 'public, max-age=3600'
         });
         
@@ -110,9 +105,13 @@ async function serveSubtitle(req, res) {
         console.log(`[subtitle] Successfully served file: ${file}`);
         return true;
     } catch (error) {
-        console.error(`[subtitle] Error serving file ${filePath}:`, error);
-        res.writeHead(500);
-        res.end('Error serving subtitle');
+        console.error('[subtitle] Unexpected error:', error);
+        try {
+            res.writeHead(500);
+            res.end('Internal server error');
+        } catch (e) {
+            console.error('[subtitle] Error sending error response:', e);
+        }
         return true;
     }
 }
@@ -160,15 +159,28 @@ const pathToLog = (url) => {
 };
 
 const serverHandler = async (req, res) => {
-    console.log(`[Server] ${new Date().toISOString()} - ${req.method} ${pathToLog(req.url)}`);
+    // Log dettagliato per ogni richiesta
+    console.log('=== INCOMING REQUEST ===');
+    console.log(`[Server] ${new Date().toISOString()}`);
+    console.log(`[Server] Method: ${req.method}`);
+    console.log(`[Server] URL: ${req.url}`);
+    console.log(`[Server] Headers:`, req.headers);
+    console.log(`[Server] Remote Address: ${req.socket.remoteAddress}`);
     
     // Prova prima a servire i sottotitoli
-    const isSubtitle = await serveSubtitle(req, res);
-    if (!isSubtitle) {
-        // Se non è una richiesta di sottotitoli, passa il controllo a Stremio
+    try {
+        const isSubtitle = await serveSubtitle(req, res);
+        if (!isSubtitle) {
+            // Se non è una richiesta di sottotitoli, passa il controllo a Stremio
+            console.log('[Server] Passando il controllo a Stremio');
+            return false;
+        }
+        console.log('[Server] Sottotitolo servito con successo');
+        return true;
+    } catch (error) {
+        console.error('[Server] Errore nella gestione della richiesta:', error);
         return false;
     }
-    return true;
 };
 
 const options = {
