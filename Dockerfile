@@ -19,8 +19,9 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     CF_MAX_RETRY=3 \
     CF_RETRY_DELAY=5000
 
-# Crea directory app
+# Crea directory app e sottotitoli
 WORKDIR /app
+RUN mkdir -p subtitles && chown -R node:node subtitles
 
 # Copia package.json e package-lock.json
 COPY package*.json ./
@@ -28,12 +29,17 @@ COPY package*.json ./
 # Installa dipendenze in modalità produzione
 RUN npm ci --only=production
 
-# Crea directory per i dati e aggiunge un cookie Cloudflare predefinito
-RUN mkdir -p /app/data
-RUN echo '{"cf_clearance":"placeholder_value","timestamp":0}' > /app/data/cf_cookie.json
+# Imposta permessi per la directory subtitles
+RUN chmod 755 subtitles
 
-# Copia il codice sorgente
+# Copia il resto dei file
 COPY . .
+
+# Cambia proprietario dei file
+RUN chown -R node:node .
+
+# Passa all'utente non-root
+USER node
 
 # Espone la porta su cui gira l'app
 EXPOSE 3000

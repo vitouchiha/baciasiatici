@@ -2,7 +2,21 @@ const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
-const octokit = new Octokit(); // Per gist anonimi non serve token
+
+// Inizializza Octokit con il token se disponibile
+const octokit = new Octokit(process.env.GITHUB_TOKEN ? {
+    auth: process.env.GITHUB_TOKEN
+} : {});
+
+async function ensureSubtitlesDir() {
+    const subtitlesDir = path.join(__dirname, '..', 'subtitles');
+    try {
+        await fs.access(subtitlesDir);
+    } catch {
+        await fs.mkdir(subtitlesDir, { recursive: true });
+    }
+    return subtitlesDir;
+}
 
 class Cache {
     constructor(ttl = 24 * 60 * 60 * 1000) { // 24 hours default TTL
@@ -144,40 +158,9 @@ class Cache {
         }
     }
 
-    async setSRTWithGist(key, content, lang) {
-        if (!content) {
-            console.error('[cache] Attempt to save empty or undefined content');
-            return null;
-        }
-
-        if (lang.toLowerCase() !== 'it') {
-            console.log(`[cache] Skipping non-Italian subtitle for key: ${key}`);
-            return null;
-        }
-
+    async createGistFromSubtitle(content, description) {
         try {
-            // Crea il gist
-            const gistUrl = await this.createGistFromSubtitle(content, `Subtitle for ${key}`);
-            if (!gistUrl) {
-                throw new Error('Failed to create gist');
-            }
-
-            // Salva l'URL del gist nella cache
-            const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
-            await this.set(cacheKey, {
-                url: gistUrl,
-                timestamp: Date.now()
-            });
-
-            return gistUrl;
-        } catch (error) {
-            console.error('[cache] Error saving subtitle to gist:', error);
-            return null;
-        }
-    }
-
-    async createGistFromSubtitle(content, description = 'Stremio subtitle') {
-        try {
+            // Prima prova a creare un gist
             const response = await octokit.gists.create({
                 files: {
                     'subtitle.srt': {
@@ -194,6 +177,55 @@ class Cache {
             return gistUrl;
         } catch (error) {
             console.error('[Gist] Error creating gist:', error);
+            
+            // Fallback: salva il file localmente
+            try {
+                const subtitlesDir = await ensureSubtitlesDir();
+                const filename = `subtitle_${Date.now()}.srt`;
+                const filePath = path.join(subtitlesDir, filename);
+                await fs.writeFile(filePath, content, 'utf8');
+                
+                // Costruisci l'URL locale
+                const domain = process.env.DOMAIN || 'localhost:7000';
+                const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+                const localUrl = `${protocol}://${domain}/subtitles/${filename}`;
+                console.log(`[Fallback] Saved subtitle locally: ${localUrl}`);
+                return localUrl;
+            } catch (fallbackError) {
+                console.error('[Fallback] Error saving subtitle locally:', fallbackError);
+                return null;
+            }
+        }
+    }
+
+    async setSRTWithGist(key, content, lang = 'it') {
+        if (!content) {
+            console.log(`[cache] No content provided for key: ${key}`);
+            return null;
+        }
+
+        if (lang.toLowerCase() !== 'it') {
+            console.log(`[cache] Skipping non-Italian subtitle for key: ${key}`);
+            return null;
+        }
+
+        try {
+            // Crea il gist o usa il fallback locale
+            const subtitleUrl = await this.createGistFromSubtitle(content, `Subtitle for ${key}`);
+            if (!subtitleUrl) {
+                throw new Error('Failed to create gist and local fallback');
+            }
+
+            // Salva l'URL nella cache
+            const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
+            await this.set(cacheKey, {
+                url: subtitleUrl,
+                timestamp: Date.now()
+            });
+
+            return subtitleUrl;
+        } catch (error) {
+            console.error('[cache] Error saving subtitle:', error);
             return null;
         }
     }
