@@ -152,55 +152,17 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
 
             if (!subtitleUrl) continue;
 
+            // Verifica che l'URL sia accessibile
             try {
-                console.log(`[subtitles] Downloading subtitle from: ${subtitleUrl}`);
-                const subResponse = await axios.get(subtitleUrl, { 
-                    responseType: 'arraybuffer',
-                    headers,
-                    timeout: 10000
-                });
-
-                let content = Buffer.from(subResponse.data);
-                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
-
-                if (isTxt1) {
-                    console.log('[subtitles] Processing encrypted .txt1 subtitle');
-                    try {
-                        const contentStr = content.toString('utf8');
-                        if (contentStr.includes('static=true')) {
-                            const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
-                            const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
-                            content = decryptKisskhSubtitleStatic(content, STATIC_KEY, STATIC_IV);
-                        } else {
-                            content = decryptKisskhSubtitleFull(content.toString('utf8'));
-                        }
-                    } catch (error) {
-                        console.error('[subtitles] Decryption failed:', error);
-                        continue;
-                    }
-                } else {
-                    content = content.toString('utf8');
-                }
-
-                // Verifica che il contenuto sia un SRT valido
-                if (!content.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
-                    console.warn('[subtitles] Invalid SRT format');
-                    continue;
-                }
-
-                // Salva il contenuto decriptato/convertito nella cache
-                const cacheKey = `${serieId}_${episodeId}_${Buffer.from(subtitleUrl).toString('base64').substring(0, 8)}`;
-                await cache.setSRT(cacheKey, content, 'it', false);
-
-                // Usa il contenuto direttamente come stringa per i sottotitoli
+                await axios.head(subtitleUrl);
+                console.log(`[subtitles] Found valid Italian subtitle URL: ${subtitleUrl}`);
                 results.push({
-                    content: content.toString('utf8'),
+                    url: subtitleUrl,
                     lang: 'it',
                     format: 'srt'
                 });
-
             } catch (error) {
-                console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
+                console.error(`[subtitles] Error checking subtitle URL ${subtitleUrl}:`, error.message);
             }
         }
 
@@ -694,13 +656,11 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
         const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';
         
-        // Convert subtitles to the format expected by Stremio
-        const subtitlesList = subtitles.map(sub => ({
-            id: `${id}_it`,
-            lang: 'ita',
-            name: 'Italian',
-            url: `data:application/x-subrip;base64,${Buffer.from(sub.content).toString('base64')}`
-        }));
+        // Log subtitle info for debugging
+        console.log(`[Stream] Found ${subtitles.length} Italian subtitles`);
+        if (subtitles.length > 0) {
+            console.log(`[Stream] Subtitle URL: ${subtitles[0].url}`);
+        }
 
         // Return stream with embedded subtitles
         return {
@@ -709,11 +669,17 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 url: streamUrl,
                 isFree: true,
                 format,
-                subtitles: subtitlesList,
+                subtitles: subtitles.map(sub => ({
+                    id: `${id}_it`,
+                    lang: 'ita',
+                    name: 'Italian',
+                    url: sub.url,
+                    format: sub.format
+                })),
                 behaviorHints: { 
                     notWebReady: false,
                     bingeGroup: `kisskh-${seriesId}`,
-                    hasSubtitles: subtitlesList.length > 0
+                    hasSubtitles: subtitles.length > 0
                 }
             }]
         };
