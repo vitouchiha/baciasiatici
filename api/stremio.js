@@ -86,36 +86,6 @@ function getSubtitleUrl(fileName) {
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
-    const cacheKey = `sub_${serieId}_${episodeId}`;
-    
-    // Controlla prima nella cache
-    const cachedSubs = await cache.getAllSRTFiles(cacheKey);
-    if (cachedSubs.length > 0) {
-        console.log(`[subtitles] Found ${cachedSubs.length} cached Italian subtitles`);
-        const results = [];
-        for (const sub of cachedSubs) {
-            try {
-                const content = await fs.promises.readFile(sub.filePath, 'utf8');
-                if (sub.isEncrypted) {
-                    const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
-                    const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
-                    results.push({
-                        content: decryptKisskhSubtitleFull(content),
-                        lang: 'it'
-                    });
-                } else {
-                    results.push({
-                        content: content,
-                        lang: 'it'
-                    });
-                }
-            } catch (error) {
-                console.error(`[subtitles] Error reading cached subtitle: ${error.message}`);
-            }
-        }
-        return results;
-    }
-
     console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);
     const browser = await puppeteerExtra.launch({
         headless: true,
@@ -148,39 +118,29 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
 
         const headers = await getAxiosHeaders();
         const response = await axios.get(subApiUrl, { 
-            responseType: 'arraybuffer', 
+            responseType: 'json',
             headers,
             timeout: 10000
         });
-        
-        if (!response.data || !Buffer.isBuffer(response.data)) {
+
+        if (!response.data) {
             console.error('[subtitles] Invalid API response');
             return [];
         }
 
-        const buffer = Buffer.from(response.data);
-        const asString = buffer.toString('utf8');
-        
-        let subtitleList;
-        try {
-            if (asString.startsWith('[')) {
-                subtitleList = JSON.parse(asString);
-            } else if (asString.startsWith('{')) {
-                subtitleList = [JSON.parse(asString)];
-            } else {
-                console.warn('[subtitles] Response is not a subtitle list!');
-                return [];
-            }
-        } catch (error) {
-            console.error('[subtitles] Error parsing subtitle list:', error);
-            return [];
-        }
-
+        let subtitleList = Array.isArray(response.data) ? response.data : [response.data];
         console.log(`[subtitles] Found ${subtitleList.length} subtitle tracks from API`);
-        const STATIC_KEY = Buffer.from('AmSmZVcH93UQUezi');
-        const STATIC_IV = Buffer.from('ReBKWW8cqdjPEnF6');
-        const decodedSubs = [];
 
+        // Filtra solo i sottotitoli italiani
+        subtitleList = subtitleList.filter(sub => {
+            if (!isItalianSubtitle(sub, sub.src)) {
+                console.log(`[subtitles] Skipping non-Italian subtitle: ${sub.src || 'unknown'}`);
+                return false;
+            }
+            return true;
+        });
+
+        const results = [];
         for (const sub of subtitleList) {
             let subtitleUrl = sub.src;
             if (!subtitleUrl && sub.GET && sub.GET.host && sub.GET.filename) {
@@ -189,69 +149,25 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                     subtitleUrl += `?v=${sub.GET.query.v}`;
                 }
             }
-            
-            if (!subtitleUrl) {
-                console.log('[subtitles] No URL found in subtitle data');
-                continue;
-            }
 
-            // Verifica se il sottotitolo è in italiano
-            if (!isItalianSubtitle(sub, subtitleUrl)) {
-                console.log(`[subtitles] Skipping non-Italian subtitle: ${subtitleUrl}`);
-                continue;
-            }
+            if (!subtitleUrl) continue;
 
+            // Verifica che l'URL sia accessibile
             try {
-                console.log(`[subtitles] Downloading Italian subtitle: ${subtitleUrl}`);
-                const subResponse = await axios.get(subtitleUrl, { 
-                    responseType: 'arraybuffer',
-                    headers,
-                    timeout: 10000
-                });
-
-                if (!subResponse.data || !Buffer.isBuffer(subResponse.data)) {
-                    console.warn('[subtitles] Empty or invalid response from subtitle URL');
-                    continue;
-                }
-
-                let content = Buffer.from(subResponse.data);
-                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
-                
-                // Decripta o converti il contenuto
-                if (isTxt1 || content.toString('utf8', 0, 100).includes('encrypted')) {
-                    try {
-                        content = decryptKisskhSubtitleFull(content.toString('utf8'));
-                    } catch (error) {
-                        console.error('[subtitles] Decryption failed:', error);
-                        continue;
-                    }
-                } else {
-                    content = content.toString('utf8');
-                }
-
-                // Verifica che sia un SRT valido
-                if (!content.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
-                    console.warn('[subtitles] Invalid SRT format after decryption');
-                    continue;
-                }
-
-                // Salva nella cache per usi futuri
-                await cache.setSRT(cacheKey, content, 'it', false);
-
-                // Aggiungi ai risultati
-                decodedSubs.push({
-                    content: content,
-                    lang: 'it'
+                await axios.head(subtitleUrl);
+                console.log(`[subtitles] Found valid Italian subtitle URL: ${subtitleUrl}`);
+                results.push({
+                    url: subtitleUrl,
+                    lang: 'it',
+                    format: 'srt'
                 });
             } catch (error) {
-                console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
-                continue;
+                console.error(`[subtitles] Error checking subtitle URL ${subtitleUrl}:`, error.message);
             }
         }
 
-        console.log(`[subtitles] Successfully processed ${decodedSubs.length} Italian subtitles`);
-        return decodedSubs;
-
+        console.log(`[subtitles] Successfully processed ${results.length} Italian subtitles`);
+        return results;
     } catch (error) {
         console.error('[subtitles] Error:', error);
         return [];
@@ -692,7 +608,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 title: '🔍 Select an episode to see the stream',
                 url: 'https://stremio.com',
                 isFree: true,
-                behaviorHints: {
+                behaviorHints: { 
                     notWebReady: true,
                     bingeGroup: `kisskh-generic`
                 }
@@ -740,13 +656,11 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
         const format = streamUrl.includes('.m3u8') ? 'hls' : 'mp4';
         
-        // Convert subtitles to the format expected by Stremio
-        const subtitlesList = subtitles.map(sub => ({
-            id: `${id}_it`,
-            lang: 'ita',
-            name: 'Italian',
-            url: `data:application/x-subrip;base64,${Buffer.from(sub.content).toString('base64')}`
-        }));
+        // Log subtitle info for debugging
+        console.log(`[Stream] Found ${subtitles.length} Italian subtitles`);
+        if (subtitles.length > 0) {
+            console.log(`[Stream] Subtitle URL: ${subtitles[0].url}`);
+        }
 
         // Return stream with embedded subtitles
         return {
@@ -755,10 +669,17 @@ builder.defineStreamHandler(async ({ type, id }) => {
                 url: streamUrl,
                 isFree: true,
                 format,
-                subtitles: subtitlesList,
+                subtitles: subtitles.map(sub => ({
+                    id: `${id}_it`,
+                    lang: 'ita',
+                    name: 'Italian',
+                    url: sub.url,
+                    format: sub.format
+                })),
                 behaviorHints: { 
                     notWebReady: false,
-                    bingeGroup: `kisskh-${seriesId}`
+                    bingeGroup: `kisskh-${seriesId}`,
+                    hasSubtitles: subtitles.length > 0
                 }
             }]
         };
