@@ -1,6 +1,8 @@
 const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
+const { Octokit } = require('@octokit/rest');
+const octokit = new Octokit(); // Per gist anonimi non serve token
 
 class Cache {
     constructor(ttl = 24 * 60 * 60 * 1000) { // 24 hours default TTL
@@ -138,6 +140,60 @@ class Cache {
             };
         } catch (error) {
             console.error('[cache] Error reading subtitle:', error);
+            return null;
+        }
+    }
+
+    async setSRTWithGist(key, content, lang) {
+        if (!content) {
+            console.error('[cache] Attempt to save empty or undefined content');
+            return null;
+        }
+
+        if (lang.toLowerCase() !== 'it') {
+            console.log(`[cache] Skipping non-Italian subtitle for key: ${key}`);
+            return null;
+        }
+
+        try {
+            // Crea il gist
+            const gistUrl = await this.createGistFromSubtitle(content, `Subtitle for ${key}`);
+            if (!gistUrl) {
+                throw new Error('Failed to create gist');
+            }
+
+            // Salva l'URL del gist nella cache
+            const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
+            await this.set(cacheKey, {
+                url: gistUrl,
+                timestamp: Date.now()
+            });
+
+            return gistUrl;
+        } catch (error) {
+            console.error('[cache] Error saving subtitle to gist:', error);
+            return null;
+        }
+    }
+
+    async createGistFromSubtitle(content, description = 'Stremio subtitle') {
+        try {
+            const response = await octokit.gists.create({
+                files: {
+                    'subtitle.srt': {
+                        content: content
+                    }
+                },
+                description: description,
+                public: true
+            });
+            
+            // Restituisci l'URL raw del gist
+            const gistUrl = response.data.files['subtitle.srt'].raw_url;
+            console.log(`[Gist] Created: ${gistUrl}`);
+            return gistUrl;
+        } catch (error) {
+            console.error('[Gist] Error creating gist:', error);
             return null;
         }
     }
