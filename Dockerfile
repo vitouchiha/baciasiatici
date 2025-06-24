@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Imposta variabili d'ambiente per Puppeteer
+# Imposta variabili d'ambiente per l'applicazione
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     NODE_ENV=production \
@@ -17,7 +17,8 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     GC_INTERVAL=300000 \
     CF_COOKIE_MAX_AGE=3600000 \
     CF_MAX_RETRY=3 \
-    CF_RETRY_DELAY=5000
+    CF_RETRY_DELAY=5000 \
+    GITHUB_TOKEN=""
 
 # Crea directory app e sottotitoli
 WORKDIR /app

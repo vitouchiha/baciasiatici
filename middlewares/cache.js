@@ -3,20 +3,10 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 const { Octokit } = require('@octokit/rest');
 
-// Inizializza Octokit con il token se disponibile
-const octokit = new Octokit(process.env.GITHUB_TOKEN ? {
+// Inizializza Octokit con il token GitHub
+const octokit = new Octokit({
     auth: process.env.GITHUB_TOKEN
-} : {});
-
-async function ensureSubtitlesDir() {
-    const subtitlesDir = path.join(__dirname, '..', 'subtitles');
-    try {
-        await fs.access(subtitlesDir);
-    } catch {
-        await fs.mkdir(subtitlesDir, { recursive: true });
-    }
-    return subtitlesDir;
-}
+});
 
 class Cache {
     constructor(ttl = 24 * 60 * 60 * 1000) { // 24 hours default TTL
@@ -159,8 +149,12 @@ class Cache {
     }
 
     async createGistFromSubtitle(content, description) {
+        if (!process.env.GITHUB_TOKEN) {
+            console.error('[Gist] GITHUB_TOKEN non impostato');
+            throw new Error('GITHUB_TOKEN is required but not set');
+        }
+
         try {
-            // Prima prova a creare un gist
             const response = await octokit.gists.create({
                 files: {
                     'subtitle.srt': {
@@ -171,30 +165,22 @@ class Cache {
                 public: true
             });
             
-            // Restituisci l'URL raw del gist
+            if (!response.data.files['subtitle.srt']?.raw_url) {
+                throw new Error('Gist creation succeeded but raw_url is missing');
+            }
+
             const gistUrl = response.data.files['subtitle.srt'].raw_url;
-            console.log(`[Gist] Created: ${gistUrl}`);
+            console.log(`[Gist] Created successfully: ${gistUrl}`);
             return gistUrl;
         } catch (error) {
-            console.error('[Gist] Error creating gist:', error);
-            
-            // Fallback: salva il file localmente
-            try {
-                const subtitlesDir = await ensureSubtitlesDir();
-                const filename = `subtitle_${Date.now()}.srt`;
-                const filePath = path.join(subtitlesDir, filename);
-                await fs.writeFile(filePath, content, 'utf8');
-                
-                // Costruisci l'URL locale
-                const domain = process.env.DOMAIN || 'localhost:3000';
-                const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
-                const localUrl = `${protocol}://${domain}/subtitles/${filename}`;
-                console.log(`[Fallback] Saved subtitle locally: ${localUrl}`);
-                return localUrl;
-            } catch (fallbackError) {
-                console.error('[Fallback] Error saving subtitle locally:', fallbackError);
-                return null;
+            if (error.status === 401) {
+                console.error('[Gist] Authentication failed. Check your GITHUB_TOKEN');
+            } else if (error.status === 403) {
+                console.error('[Gist] Rate limit exceeded or token lacks gist scope');
+            } else {
+                console.error('[Gist] Error creating gist:', error.message);
             }
+            throw error;
         }
     }
 
@@ -209,63 +195,28 @@ class Cache {
             return null;
         }
 
-        try {
-            // Crea il gist o usa il fallback locale
-            const subtitleUrl = await this.createGistFromSubtitle(content, `Subtitle for ${key}`);
-            if (!subtitleUrl) {
-                throw new Error('Failed to create gist and local fallback');
-            }
+        // Prima controlla se abbiamo già un URL cached per questo sottotitolo
+        const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
+        const cached = await this.get(cacheKey);
+        if (cached?.url) {
+            console.log(`[cache] Found cached gist URL for ${key}`);
+            return cached.url;
+        }
 
-            // Salva l'URL nella cache
-            const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
+        try {
+            // Crea il gist
+            const gistUrl = await this.createGistFromSubtitle(content, `Subtitle for ${key}`);
+            
+            // Salva l'URL del gist nella cache
             await this.set(cacheKey, {
-                url: subtitleUrl,
+                url: gistUrl,
                 timestamp: Date.now()
             });
 
-            return subtitleUrl;
+            return gistUrl;
         } catch (error) {
-            console.error('[cache] Error saving subtitle:', error);
+            console.error(`[cache] Error saving subtitle to gist for ${key}:`, error.message);
             return null;
-        }
-    }
-
-    async getAllSRTFiles(key) {
-        try {
-            const files = await fs.readdir(this.cacheDir);
-            // Filtra i file dei sottotitoli italiani (sia .srt che .txt1)
-            const subtitleFiles = files.filter(f => 
-                f.startsWith(this.getCacheKey(key)) && 
-                (f.endsWith('.srt') || f.endsWith('.txt1')) &&
-                f.toLowerCase().includes('_it.')
-            );
-            
-            const results = [];
-            
-            for (const file of subtitleFiles) {
-                const filePath = path.join(this.cacheDir, file);
-                try {
-                    const stats = await fs.stat(filePath);
-                    
-                    if (Date.now() - stats.mtime.getTime() <= this.ttl) {
-                        results.push({
-                            lang: 'it',
-                            filePath,
-                            isEncrypted: file.endsWith('.txt1')
-                        });
-                    } else {
-                        await fs.unlink(filePath);
-                    }
-                } catch (error) {
-                    console.error(`[cache] Error processing file ${file}:`, error);
-                    continue;
-                }
-            }
-            
-            return results;
-        } catch (error) {
-            console.error('[cache] Error getting subtitle files:', error);
-            return [];
         }
     }
 }

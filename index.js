@@ -17,6 +17,12 @@ if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
   }
 }
 
+// Verifica la presenza del token GitHub
+if (!process.env.GITHUB_TOKEN) {
+    console.error('[GitHub] GITHUB_TOKEN non impostato. I sottotitoli potrebbero non funzionare correttamente.');
+    console.error('[GitHub] Per configurare, crea un token su https://github.com/settings/tokens e impostalo come variabile d\'ambiente GITHUB_TOKEN');
+}
+
 const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
 const express = require('express');
