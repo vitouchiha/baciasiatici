@@ -8,7 +8,7 @@
     "vercel-build": "npm install"
   },
   "dependencies": {
-    "@octokit/rest": "^22.0.0",
+    "@octokit/rest": "19.0.5",
     "@vercel/blob": "1.0.1",
     "axios": "^1.9.0",
     "cors": "^2.8.5",
