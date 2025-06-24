@@ -186,7 +186,7 @@ class Cache {
                 await fs.writeFile(filePath, content, 'utf8');
                 
                 // Costruisci l'URL locale
-                const domain = process.env.DOMAIN || 'localhost:7000';
+                const domain = process.env.DOMAIN || 'localhost:3000';
                 const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http';
                 const localUrl = `${protocol}://${domain}/subtitles/${filename}`;
                 console.log(`[Fallback] Saved subtitle locally: ${localUrl}`);
