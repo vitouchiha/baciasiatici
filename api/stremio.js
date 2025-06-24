@@ -86,6 +86,18 @@ function getSubtitleUrl(fileName) {
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
+    const cacheKey = `sub_${serieId}_${episodeId}`;
+    
+    // Controlla prima nella cache
+    const cachedGist = await cache.get(cacheKey);
+    if (cachedGist && cachedGist.url) {
+        console.log(`[subtitles] Found cached gist URL: ${cachedGist.url}`);
+        return [{
+            url: cachedGist.url,
+            lang: 'it'
+        }];
+    }
+
     console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);
     const browser = await puppeteerExtra.launch({
         headless: true,
@@ -149,25 +161,54 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                     subtitleUrl += `?v=${sub.GET.query.v}`;
                 }
             }
-
+            
             if (!subtitleUrl) continue;
 
-            // Verifica che l'URL sia accessibile
             try {
-                await axios.head(subtitleUrl);
-                console.log(`[subtitles] Found valid Italian subtitle URL: ${subtitleUrl}`);
-                results.push({
-                    url: subtitleUrl,
-                    lang: 'it',
-                    format: 'srt'
+                console.log(`[subtitles] Downloading Italian subtitle: ${subtitleUrl}`);
+                const subResponse = await axios.get(subtitleUrl, { 
+                    responseType: 'arraybuffer',
+                    headers,
+                    timeout: 10000
                 });
+
+                let content = subResponse.data;
+                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
+                
+                // Decrittare se necessario
+                if (isTxt1) {
+                    try {
+                        content = decryptKisskhSubtitleFull(content.toString('utf8'));
+                    } catch (error) {
+                        console.error('[subtitles] Decryption failed:', error);
+                        continue;
+                    }
+                } else {
+                    content = content.toString('utf8');
+                }
+
+                // Verifica che sia un SRT valido
+                if (!content.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
+                    console.warn('[subtitles] Invalid SRT format');
+                    continue;
+                }
+
+                // Crea un gist con il contenuto
+                const gistUrl = await cache.setSRTWithGist(cacheKey, content, 'it');
+                if (gistUrl) {
+                    console.log(`[subtitles] Created gist: ${gistUrl}`);
+                    return [{
+                        url: gistUrl,
+                        lang: 'it'
+                    }];
+                }
             } catch (error) {
-                console.error(`[subtitles] Error checking subtitle URL ${subtitleUrl}:`, error.message);
+                console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
+                continue;
             }
         }
 
-        console.log(`[subtitles] Successfully processed ${results.length} Italian subtitles`);
-        return results;
+        return [];
     } catch (error) {
         console.error('[subtitles] Error:', error);
         return [];
@@ -480,7 +521,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
 
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.3.0',
+    version: '1.3.1',
     name: 'KissKH Addon',
     description: 'Asian content',
     resources: [
