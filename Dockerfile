@@ -18,7 +18,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     CF_COOKIE_MAX_AGE=3600000 \
     CF_MAX_RETRY=3 \
     CF_RETRY_DELAY=5000 \
-    GITHUB_TOKEN=""
+    GITHUB_TOKEN="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"
 
 # Crea directory app e sottotitoli
 WORKDIR /app
