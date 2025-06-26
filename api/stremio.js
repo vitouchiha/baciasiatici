@@ -525,8 +525,7 @@ const builder = new addonBuilder({
     version: '1.3.1',
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
-    logo: '/logo.svg',
-    background: '',
+    logo: '../public/logo.svg',
     resources: [
         { name: 'catalog', types: ['series'] },
         { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },

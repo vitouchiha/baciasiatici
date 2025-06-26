@@ -27,28 +27,6 @@ const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
 const path = require('path');
 const fs = require('fs').promises;
-const express = require('express');
-
-// Inizializza Express
-const app = express();
-
-// Middleware per modificare il manifest
-app.use((req, res, next) => {
-    const originalJson = res.json;
-    res.json = function(obj) {
-        if (obj && obj.manifest) {
-            const proto = req.headers['x-forwarded-proto'] || req.protocol;
-            const host = req.headers['x-forwarded-host'] || req.get('host');
-            const baseUrl = `${proto}://${host}`;
-            obj.manifest.logo = `${baseUrl}/logo.svg`;
-        }
-        originalJson.call(this, obj);
-    };
-    next();
-});
-
-// Servi i file statici dalla cartella public
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Funzione per verificare la cartella cache
 async function checkCacheFolder() {
