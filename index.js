@@ -27,6 +27,13 @@ const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
 const path = require('path');
 const fs = require('fs').promises;
+const express = require('express');
+
+// Inizializza Express
+const app = express();
+
+// Servi i file statici dalla cartella public
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Funzione per verificare la cartella cache
 async function checkCacheFolder() {
