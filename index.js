@@ -25,10 +25,8 @@ if (!process.env.GITHUB_TOKEN) {
 
 const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
-const express = require('express');
 const path = require('path');
 const fs = require('fs').promises;
-const app = express();
 
 // Funzione per verificare la cartella cache
 async function checkCacheFolder() {
@@ -65,9 +63,6 @@ async function checkCacheFolder() {
         }
     }
 }
-
-// Configura il middleware per servire i file dei sottotitoli
-app.use('/subtitles', express.static(path.join(__dirname, 'subtitles')));
 
 const options = {
     port: process.env.PORT || 3000,

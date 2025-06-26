@@ -522,8 +522,9 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
     version: '1.3.1',
-    name: 'KissKH Addon',
-    description: 'Asian content',
+    name: 'KissKH Addon',    description: 'Asian content with Italian subtitles',
+    logo: 'https://kisskh.co/css/img/logo.png',
+    background: '#1a1a1a',
     resources: [
         { name: 'catalog', types: ['series'] },
         { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
@@ -533,7 +534,7 @@ const builder = new addonBuilder({
     catalogs: [{
         type: 'series',
         id: 'kisskh',
-        name: 'K-Drama',
+        name: 'KissKH',
         extra: [
             { name: 'search', isRequired: false },
             { name: 'skip', isRequired: false },
