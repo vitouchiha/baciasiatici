@@ -519,12 +519,12 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
     }
 }
 
+// Crea il builder con il manifest
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
     version: '1.3.1',
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
-    logo: '/logo.svg',  // Usiamo il logo SVG locale
     resources: [
         { name: 'catalog', types: ['series'] },
         { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
