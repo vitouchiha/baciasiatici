@@ -157,7 +157,7 @@ async function fetchCloudflareCookie() {
         
         // Wait longer for Cloudflare challenge to complete
         console.log('[Cloudflare] Waiting for Cloudflare challenge to complete...');
-        await new Promise(resolve => setTimeout(resolve, 90000));
+        await new Promise(resolve => setTimeout(resolve, 20000));
         
         // Try to detect if we're still on the Cloudflare page
         const cfDetected = await page.evaluate(() => {
@@ -168,7 +168,7 @@ async function fetchCloudflareCookie() {
         
         if (cfDetected) {
             console.log('[Cloudflare] Still on Cloudflare challenge page, waiting longer...');
-            await new Promise(resolve => setTimeout(resolve, 90000));
+            await new Promise(resolve => setTimeout(resolve, 20000));
         }
         
         // Get all cookies
