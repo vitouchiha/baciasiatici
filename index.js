@@ -38,7 +38,7 @@ async function checkCacheFolder() {
         
         // Lista i file nella cartella cache
         const files = await fs.readdir(cacheFolder);
-        const subtitleFiles = files.filter(f => f.endsWith('.srt') || f.endsWith('.txt1'));
+        const subtitleFiles = files.filter(f => f.endsWith('.srt') || f.endsWith('.txt1') || f.endsWith('.txt'));
         
         if (subtitleFiles.length > 0) {
             console.log(`[Cache] Trovati ${subtitleFiles.length} file di sottotitoli in cache:`);

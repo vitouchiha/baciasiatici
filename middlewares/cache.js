@@ -135,7 +135,7 @@ class Cache {
             }
 
             const content = await fs.readFile(filePath);
-            const isEncrypted = filePath.endsWith('.txt1');
+            const isEncrypted = filePath.endsWith('.txt1') || filePath.endsWith('.txt');
             return { 
                 content: content.toString('utf8'),
                 filePath,

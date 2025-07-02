@@ -1,13 +1,17 @@
-const puppeteerExtra = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const chromium = require('chrome-aws-lambda');
 const fs = require('fs').promises;
 const path = require('path');
 
-// Add the stealth plugin
-puppeteerExtra.use(StealthPlugin());
-
-// Add more stealth plugins for better Cloudflare bypass
-const { executablePath } = require('puppeteer');
+// Helper per ottenere le opzioni di Puppeteer
+async function getPuppeteerOptions() {
+    return {
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath,
+        headless: true,
+        ignoreHTTPSErrors: true
+    };
+};
 
 const cache = new Map();
 const COOKIE_FILE_PATH = path.join(process.cwd(), 'data', 'cf_cookie.json');
@@ -88,32 +92,7 @@ async function getCloudflareCookie(forceRefresh = false) {
 }
 
 async function fetchCloudflareCookie() {
-    // Launch options with enhanced stealth
-    const launchOptions = {
-        headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || executablePath(),
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu',
-            '--hide-scrollbars',
-            '--mute-audio',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-extensions',
-            '--disable-component-extensions-with-background-pages',
-            '--disable-default-apps',
-            '--window-size=1280,720', // Ridotto per consumare meno memoria
-            '--js-flags="--max-old-space-size=512"' // Limita l'uso di memoria di V8
-        ],
-        ignoreHTTPSErrors: true
-    };
-    
-    const browser = await puppeteerExtra.launch(launchOptions);
+    const browser = await chromium.puppeteer.launch(await getPuppeteerOptions());
     try {
         const page = await browser.newPage();
         
@@ -157,7 +136,7 @@ async function fetchCloudflareCookie() {
         
         // Wait longer for Cloudflare challenge to complete
         console.log('[Cloudflare] Waiting for Cloudflare challenge to complete...');
-        await new Promise(resolve => setTimeout(resolve, 20000));
+        await new Promise(resolve => setTimeout(resolve, 15000));
         
         // Try to detect if we're still on the Cloudflare page
         const cfDetected = await page.evaluate(() => {
@@ -168,7 +147,7 @@ async function fetchCloudflareCookie() {
         
         if (cfDetected) {
             console.log('[Cloudflare] Still on Cloudflare challenge page, waiting longer...');
-            await new Promise(resolve => setTimeout(resolve, 20000));
+            await new Promise(resolve => setTimeout(resolve, 15000));
         }
         
         // Get all cookies

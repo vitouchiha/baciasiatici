@@ -2,13 +2,22 @@ const { addonBuilder } = require('stremio-addon-sdk');
 const kisskh = require('./kisskh');
 const { getCloudflareCookie } = require('./cloudflare');
 const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./sub_decrypter');
-const puppeteerExtra = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const chromium = require('chrome-aws-lambda');
 const axios = require('axios');
 const cache = require('../middlewares/cache');
 const path = require('path');
 const fs = require('fs').promises;
-puppeteerExtra.use(StealthPlugin());
+
+// Helper per ottenere le opzioni di Puppeteer
+async function getPuppeteerOptions() {
+    return {
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath,
+        headless: true,
+        ignoreHTTPSErrors: true
+    };
+};
 
 // Ottieni l'URL base per i sottotitoli
 function getPublicSubtitleUrl(fileName) {
@@ -58,6 +67,7 @@ function isItalianSubtitle(subtitle, url) {
            check(subtitle.lang) ||
            (url && (url.toLowerCase().includes('.it.txt1') || 
                    url.toLowerCase().includes('.it.srt') || 
+                   url.toLowerCase().includes('.it.txt') ||
                    url.toLowerCase().includes('/it/') ||
                    url.toLowerCase().includes('italian')));
 }
@@ -98,11 +108,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
         }];
     }
 
-    console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);
-    const browser = await puppeteerExtra.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);    const browser = await chromium.puppeteer.launch(await getPuppeteerOptions());
 
     try {
         const page = await browser.newPage();
@@ -174,9 +180,10 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
 
                 let content = subResponse.data;
                 const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
+                const isTxt = subtitleUrl.toLowerCase().endsWith('.txt');
                 
                 // Decrittare se necessario
-                if (isTxt1) {
+                if (isTxt1 || isTxt) {
                     try {
                         content = decryptKisskhSubtitleFull(content.toString('utf8'));
                     } catch (error) {
@@ -300,17 +307,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
             console.log(`[StreamCache] Hit per ${cacheKey}`);
             return cached.url;
         }
-    }
-
-    const browser = await puppeteerExtra.launch({
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
-        ]
-    });
+    }    const browser = await chromium.puppeteer.launch(await getPuppeteerOptions());
     let streamUrl = null;
 
     try {
@@ -522,10 +519,11 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
 // Crea il builder con il manifest
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.3.1',
+    version: '1.3.6',
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
-    logo: '../public/logo.svg',
+    logo: '/public/logo.svg',
+    background: '/public/background.svg',
     resources: [
         { name: 'catalog', types: ['series'] },
         { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },

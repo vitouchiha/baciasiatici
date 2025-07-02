@@ -269,7 +269,7 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
             if (!subtitleUrl) continue;
 
             // Facoltativo: mantieni il filtro sugli URL italiani per sicurezza
-            const allowedPattern = /^https?:\/\/auto\.streamsub\.top\/.*\.it\.(srt|txt1)$/i;
+            const allowedPattern = /^https?:\/\/auto\.streamsub\.top\/.*\.it\.(srt|txt1|txt)$/i;
             if (!allowedPattern.test(subtitleUrl)) {
                 console.log('[FILTER] Scartato endpoint non valido:', subtitleUrl);
                 continue;
