@@ -18,7 +18,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     CF_COOKIE_MAX_AGE=3600000 \
     CF_MAX_RETRY=3 \
     CF_RETRY_DELAY=5000 \
-    GITHUB_TOKEN=your_github_token_here
+    GITHUB_TOKEN=""
 
 # Crea directory app e sottotitoli
 WORKDIR /app
@@ -31,7 +31,7 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # Imposta permessi per la directory subtitles
-RUN chmod 777 subtitles
+RUN chmod 755 subtitles
 
 # Copia il resto dei file
 COPY . .
