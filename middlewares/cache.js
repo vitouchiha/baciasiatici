@@ -95,6 +95,7 @@ class Cache {
 
         const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
         // Se il contenuto è criptato, salva come .txt1, altrimenti come .srt
+        // Aggiungiamo supporto anche per .txt per file criptati alternativi
         const extension = encrypted ? 'txt1' : 'srt';
         const fileName = `${cacheKey}.${extension}`;
         const filePath = path.join(this.cacheDir, fileName);
@@ -116,36 +117,38 @@ class Cache {
         }
 
         const cacheKey = this.getCacheKey(`${key}_${lang.toLowerCase()}`);
-        // Prova prima .txt1, poi .srt
-        const fileName = `${cacheKey}.txt1`;
-        const filePath = path.join(this.cacheDir, fileName);
-        let exists = await fs.access(filePath).then(() => true).catch(() => false);
+        // Prova prima .txt1, poi .txt, infine .srt
+        const extensions = ['txt1', 'txt', 'srt'];
         
-        if (!exists) {
-            const srtPath = path.join(this.cacheDir, `${cacheKey}.srt`);
-            exists = await fs.access(srtPath).then(() => true).catch(() => false);
-            if (!exists) return null;
-        }
+        for (const ext of extensions) {
+            const fileName = `${cacheKey}.${ext}`;
+            const filePath = path.join(this.cacheDir, fileName);
+            const exists = await fs.access(filePath).then(() => true).catch(() => false);
+            
+            if (exists) {
+                try {
+                    const stats = await fs.stat(filePath);
+                    if (Date.now() - stats.mtime.getTime() > this.ttl) {
+                        await fs.unlink(filePath);
+                        continue; // Prova la prossima estensione
+                    }
 
-        try {
-            const stats = await fs.stat(filePath);
-            if (Date.now() - stats.mtime.getTime() > this.ttl) {
-                await fs.unlink(filePath);
-                return null;
+                    const content = await fs.readFile(filePath);
+                    const isEncrypted = ext === 'txt1' || ext === 'txt';
+                    return { 
+                        content: content.toString('utf8'),
+                        filePath,
+                        fileName: path.basename(filePath),
+                        isEncrypted
+                    };
+                } catch (error) {
+                    console.error(`[cache] Error reading subtitle ${fileName}:`, error);
+                    continue; // Prova la prossima estensione
+                }
             }
-
-            const content = await fs.readFile(filePath);
-            const isEncrypted = filePath.endsWith('.txt1') || filePath.endsWith('.txt');
-            return { 
-                content: content.toString('utf8'),
-                filePath,
-                fileName: path.basename(filePath),
-                isEncrypted
-            };
-        } catch (error) {
-            console.error('[cache] Error reading subtitle:', error);
-            return null;
         }
+
+        return null;
     }
 
     async createGistFromSubtitle(content, description) {

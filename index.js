@@ -1,3 +1,6 @@
+// Carica le variabili d'ambiente dal file .env
+require('dotenv').config();
+
 // Abilita la garbage collection manuale se l'app viene avviata con --expose-gc
 if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
   try {

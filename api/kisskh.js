@@ -37,21 +37,126 @@ function buildApiUrl({ page = 1, limit = 20, search = '' }) {
 }
 
 async function getCatalog({ page = 1, limit = 20, search = '' }) {
-
-
-    const url = buildApiUrl({ page, limit, search });
-    const headers = await getAxiosHeaders();
-    console.log(`[getCatalog] URL: ${url}`);
-    const { data } = await axios.get(url, { headers });
-    if (!data || !data.data) return [];
-    return data.data.map(item => ({
-        id: `kisskh_${item.id}`,
-        type: 'series',
-        name: item.title,
-        poster: item.thumbnail,
-        posterShape: 'poster',
-        releaseInfo: item.releaseDate ? item.releaseDate.slice(0, 4) : ''
-    }));
+    const searchTerm = search ? search.trim().toLowerCase() : '';
+    
+    // Se non c'è ricerca, ritorna il catalogo normale
+    if (!searchTerm) {
+        const url = buildApiUrl({ page, limit, search });
+        const headers = await getAxiosHeaders();
+        console.log(`[getCatalog] URL: ${url}`);
+        const { data } = await axios.get(url, { headers });
+        if (!data || !data.data) return [];
+        return data.data.map(item => ({
+            id: `kisskh_${item.id}`,
+            type: 'series',
+            name: item.title,
+            poster: item.thumbnail,
+            posterShape: 'poster',
+            releaseInfo: item.releaseDate ? item.releaseDate.slice(0, 4) : ''
+        }));
+    }
+    
+    // Per la ricerca, raccogliamo risultati da più pagine fino a trovare abbastanza contenuti
+    console.log(`[getCatalog] Searching for: "${searchTerm}"`);
+    let allResults = [];
+    let currentPage = 1;
+    let consecutiveEmptyPages = 0;
+    const maxPages = 10; // Limite massimo per evitare loop infiniti
+    const maxEmptyPages = 3; // Fermiamoci se 3 pagine consecutive non danno risultati
+    const targetResults = Math.max(limit, 3); // Ridotto da 5 a 3 per essere più efficiente
+    
+    while (allResults.length < targetResults && currentPage <= maxPages && consecutiveEmptyPages < maxEmptyPages) {
+        const url = buildApiUrl({ page: currentPage, limit: 30, search });
+        const headers = await getAxiosHeaders();
+        console.log(`[getCatalog] Fetching page ${currentPage}: ${url}`);
+        
+        try {
+            const { data } = await axios.get(url, { headers });
+            if (!data || !data.data || data.data.length === 0) break;
+            
+            const pageResults = data.data.map(item => ({
+                id: `kisskh_${item.id}`,
+                type: 'series',
+                name: item.title,
+                poster: item.thumbnail,
+                posterShape: 'poster',
+                releaseInfo: item.releaseDate ? item.releaseDate.slice(0, 4) : ''
+            }));
+            
+            // Filtriamo i risultati di questa pagina con algoritmo migliorato
+            const filteredResults = pageResults.filter(item => {
+                const itemTitle = item.name.toLowerCase();
+                
+                // 1. Corrispondenza esatta di termine
+                if (itemTitle.includes(searchTerm)) {
+                    return true;
+                }
+                
+                // 2. Corrispondenza di parole singole
+                const searchWords = searchTerm.split(' ').filter(w => w.length > 2);
+                const titleWords = itemTitle.split(' ').filter(w => w.length > 2);
+                
+                for (const searchWord of searchWords) {
+                    for (const titleWord of titleWords) {
+                        if (titleWord.includes(searchWord) || searchWord.includes(titleWord)) {
+                            return true;
+                        }
+                    }
+                }
+                
+                // 3. Corrispondenza fuzzy per errori di battitura
+                for (const titleWord of titleWords) {
+                    if (titleWord.length >= 4 && searchTerm.length >= 4) {
+                        const similarity = calculateSimilarity(searchTerm, titleWord);
+                        if (similarity > 0.7) {
+                            return true;
+                        }
+                    }
+                }
+                
+                return false;
+            });
+            
+            allResults = allResults.concat(filteredResults);
+            
+            // Aggiorna il contatore di pagine vuote
+            if (filteredResults.length > 0) {
+                consecutiveEmptyPages = 0; // Reset se troviamo risultati
+            } else {
+                consecutiveEmptyPages++;
+            }
+            
+            // Se abbiamo trovato abbastanza risultati, possiamo fermarci
+            if (allResults.length >= targetResults) {
+                console.log(`[getCatalog] Found enough results (${allResults.length}), stopping search at page ${currentPage}`);
+                break;
+            }
+            
+            // Se abbiamo troppe pagine consecutive senza risultati, fermiamoci
+            if (consecutiveEmptyPages >= maxEmptyPages) {
+                console.log(`[getCatalog] ${maxEmptyPages} consecutive pages without results, stopping search at page ${currentPage}`);
+                break;
+            }
+            
+            currentPage++;
+            
+            // Continua a cercare anche se questa pagina non ha prodotto risultati filtrati
+            // ma fermiamoci se non ci sono dati dall'API
+            
+        } catch (error) {
+            console.error(`[getCatalog] Error fetching page ${currentPage}:`, error.message);
+            break;
+        }
+    }
+    
+    console.log(`[getCatalog] Search completed after ${currentPage} pages. Total results found: ${allResults.length}`);
+    
+    // Limitiamo ai risultati richiesti e rimuoviamo duplicati
+    const uniqueResults = allResults.filter((item, index, self) => 
+        index === self.findIndex(t => t.id === item.id)
+    );
+    
+    return uniqueResults.slice(0, limit);
 }
 
 async function getSeriesDetails(serieId) {
@@ -289,6 +394,15 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
                 } else if (realBuf.length > 32) {
                     text = decryptKisskhSubtitleStatic(realBuf, STATIC_KEY, STATIC_IV);
                 }
+
+                // Controlla se il file è criptato basandosi sull'estensione
+                const isEncrypted = subtitleUrl.toLowerCase().endsWith('.txt1') || 
+                                  subtitleUrl.toLowerCase().endsWith('.txt');
+                
+                if (isEncrypted && !text) {
+                    console.warn('[WARN] File criptato ma decrittazione fallita:', subtitleUrl);
+                    continue;
+                }
                 // Dopo aver decrittato il testo
                 console.log('[DEBUG] Sottotitolo decrittato:', text.substring(0, 200)); // Mostra i primi 200 caratteri
                 // Nella funzione getSubtitlesWithPuppeteer, modifica la parte dove aggiungi i sottotitoli decodificati:
@@ -313,6 +427,37 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     }
 }
 
+
+// Funzione per calcolare la similarità tra due stringhe (algoritmo Levenshtein semplificato)
+function calculateSimilarity(str1, str2) {
+    if (str1 === str2) return 1.0;
+    
+    const len1 = str1.length;
+    const len2 = str2.length;
+    
+    if (len1 === 0) return len2 === 0 ? 1.0 : 0.0;
+    if (len2 === 0) return 0.0;
+    
+    // Matrice per il calcolo della distanza di Levenshtein
+    const matrix = Array(len1 + 1).fill().map(() => Array(len2 + 1).fill(0));
+    
+    for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+    for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+    
+    for (let i = 1; i <= len1; i++) {
+        for (let j = 1; j <= len2; j++) {
+            const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(
+                matrix[i - 1][j] + 1,      // deletion
+                matrix[i][j - 1] + 1,      // insertion
+                matrix[i - 1][j - 1] + cost // substitution
+            );
+        }
+    }
+    
+    const maxLen = Math.max(len1, len2);
+    return (maxLen - matrix[len1][len2]) / maxLen;
+}
 
 
 module.exports = {
