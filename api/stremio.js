@@ -1,42 +1,24 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const kisskh = require('./kisskh');
 const { getCloudflareCookie } = require('./cloudflare');
-const { decryptKisskhSubtitleFull, decryptKisskhSubtitleStatic } = require('./sub_decrypter');
+const { decryptKisskhSubtitleFull } = require('./sub_decrypter');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const axios = require('axios');
 const cache = require('../middlewares/cache');
-const path = require('path');
-const fs = require('fs').promises;
+
+const {
+    cleanTitleForSearch,
+    titleSimilarity,
+    extractTitleFromExternalId,
+    searchSeriesByTitle,
+    isItalianSubtitle
+} = require('./helper');
+
 puppeteerExtra.use(StealthPlugin());
 
-// Ottieni l'URL base per i sottotitoli
-function getPublicSubtitleUrl(fileName) {
-    // Se è definito ADDON_URL in environment, usalo per costruire l'URL base
-    if (process.env.ADDON_URL) {
-        try {
-            const baseUrl = new URL(process.env.ADDON_URL).origin;
-            return `${baseUrl}/subtitle/${fileName}`;
-        } catch (e) {
-            console.error('[subtitles] Error parsing ADDON_URL:', e);
-        }
-    }
-    
-    // Fallback all'URL hardcoded (temporaneo per test)
-    const domain = process.env.DOMAIN || 'baciasiatici.steveceltis.duckdns.org';
-    return `https://${domain}/subtitle/${fileName}`;
-}
 
-// Funzione per ottenere il dominio base dalla richiesta
-function getBaseUrl(req) {
-    if (!req) return '';
-    const proto = req.headers['x-forwarded-proto'] || 'http';
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    return `${proto}://${host}`;
-}
 
-const BASE_URL = process.env.BASE_URL || '';
-const ADDON_URL = process.env.ADDON_URL || '';
 
 // Funzione helper per ottenere gli headers
 async function getAxiosHeaders() {
@@ -50,39 +32,7 @@ async function getAxiosHeaders() {
     };
 }
 
-// Funzione per verificare se un sottotitolo è in italiano
-function isItalianSubtitle(subtitle, url) {
-    const check = (str) => str && str.toLowerCase().includes('it');
-    return check(subtitle.language) || 
-           check(subtitle.label) || 
-           check(subtitle.lang) ||
-           (url && (url.toLowerCase().includes('.it.txt1') || 
-                   url.toLowerCase().includes('.it.srt') || 
-                   url.toLowerCase().includes('/it/') ||
-                   url.toLowerCase().includes('italian')));
-}
 
-// Funzione per verificare se il contenuto è un SRT valido
-function isValidSRT(content) {
-    if (!content) return false;
-    const text = typeof content === 'string' ? content : content.toString('utf8');
-    return text.trim().match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/);
-}
-
-// Funzione per generare l'URL corretto per i sottotitoli
-function getSubtitleUrl(fileName) {
-    // Se abbiamo un BASE_URL configurato, usalo
-    if (BASE_URL) {
-        return `${BASE_URL}/subtitle/${fileName}`;
-    }
-    // Se abbiamo un ADDON_URL configurato, estraiamo il base path
-    if (ADDON_URL) {
-        const url = new URL(ADDON_URL);
-        return `${url.pathname}/subtitle/${fileName}`.replace(/\/+/g, '/');
-    }
-    // Fallback all'URL relativo
-    return `/subtitle/${fileName}`;
-}
 
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
@@ -174,9 +124,11 @@ async function getSubtitlesWithPuppeteer(serieId, episodeId) {
 
                 let content = subResponse.data;
                 const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
+                const isTxt = subtitleUrl.toLowerCase().endsWith('.txt');
+                const isEncrypted = isTxt1 || isTxt;
                 
                 // Decrittare se necessario
-                if (isTxt1) {
+                if (isEncrypted) {
                     try {
                         content = decryptKisskhSubtitleFull(content.toString('utf8'));
                     } catch (error) {
@@ -519,21 +471,23 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
     }
 }
 
+// Crea il builder con il manifest
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.3.1',
+    version: '1.3.6',
     name: 'KissKH Addon',
-    description: 'Asian content',
+    description: 'Asian content with Italian subtitles',
+    logo: 'https://imgur.com/PVEr4oa.jpeg',
     resources: [
         { name: 'catalog', types: ['series'] },
-        { name: 'meta', types: ['series'], idPrefixes: ['kisskh_'] },
-        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_'] }
+        { name: 'meta', types: ['series'], idPrefixes: ['kisskh_', 'tt', 'tmdb'] }, // Supporta anche ID esterni
+        { name: 'stream', types: ['series'], idPrefixes: ['kisskh_', 'tt', 'tmdb'] }
     ],
     types: ['series'],
     catalogs: [{
         type: 'series',
         id: 'kisskh',
-        name: 'K-Drama',
+        name: 'KissKH',
         extra: [
             { name: 'search', isRequired: false },
             { name: 'skip', isRequired: false },
@@ -581,60 +535,125 @@ builder.defineMetaHandler(async ({ type, id }) => {
     console.log(`[MetaHandler] Request meta for id=${id}`);
     if (type !== 'series') return { meta: null };
 
-    const seriesId = id.replace('kisskh_', '');
-    let details;
-    try {
-        details = await getCachedSeriesDetails(seriesId);
-        console.log('[MetaHandler] Details retrieved:', JSON.stringify(details, null, 2));
-    } catch (e) {
-        console.error('[MetaHandler] Error in getSeriesDetails:', e.stack || e.message);
-        return {
-            meta: {
-                id,
-                type: 'series',
-                name: 'Loading Error',
-                description: 'Unable to retrieve series details. Please try again later.',
-                poster: '',
-                videos: []
-            }
+    // Se è un ID di KissKH, gestiscilo normalmente
+    if (id.startsWith('kisskh_')) {
+        const seriesId = id.replace('kisskh_', '');
+        let details;
+        try {
+            details = await getCachedSeriesDetails(seriesId);
+            console.log('[MetaHandler] Details retrieved:', JSON.stringify(details, null, 2));
+        } catch (e) {
+            console.error('[MetaHandler] Error in getSeriesDetails:', e.stack || e.message);
+            return {
+                meta: {
+                    id,
+                    type: 'series',
+                    name: 'Loading Error',
+                    description: 'Unable to retrieve series details. Please try again later.',
+                    poster: '',
+                    videos: []
+                }
+            };
+        }
+
+        if (!details || !Array.isArray(details.episodes) || details.episodes.length === 0) {
+            console.warn('[MetaHandler] Incomplete details or missing episodes for', seriesId);
+            return {
+                meta: {
+                    id,
+                    type: 'series',
+                    name: details?.title || 'Title not available',
+                    description: 'Series details incomplete or missing.',
+                    poster: details?.thumbnail || '',
+                    videos: []
+                }
+            };
+        }
+
+        // Map episodes correctly
+        const videos = details.episodes.map(ep => ({
+            id: `${ep.id}`,
+            title: ep.title || `Episode ${ep.number}`,
+            season: ep.season || 1,
+            episode: ep.episode || ep.number || 1
+        }));
+
+        const meta = {
+            id: `kisskh_${details.id}`,
+            type: 'series',
+            name: details.title || '',
+            poster: details.thumbnail || '',
+            background: details.thumbnail || '',
+            posterShape: 'poster',
+            description: (details.description || '').replace(/\r?\n+/g, ' ').trim(),
+            releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
+            videos,
         };
-    }
 
-    if (!details || !Array.isArray(details.episodes) || details.episodes.length === 0) {
-        console.warn('[MetaHandler] Incomplete details or missing episodes for', seriesId);
-        return {
-            meta: {
-                id,
-                type: 'series',
-                name: details?.title || 'Title not available',
-                description: 'Series details incomplete or missing.',
-                poster: details?.thumbnail || '',
-                videos: []
+        return { meta };
+    } else {
+        // ID esterno (TMDB, IMDB, etc.) - prova a cercare per titolo
+        console.log(`[MetaHandler] External ID detected: ${id}`);
+        
+        // Prova a estrarre il titolo dall'ID
+        const extractedTitle = extractTitleFromExternalId(id);
+        if (!extractedTitle) {
+            console.log(`[MetaHandler] Cannot extract title from external ID: ${id}`);
+            return { meta: null };
+        }
+        
+        console.log(`[MetaHandler] Extracted title: "${extractedTitle}" from ID: ${id}`);
+        
+        // Cerca serie per titolo
+        const searchResults = await searchSeriesByTitle(extractedTitle, 1, kisskh.getCatalog);
+        if (searchResults.length === 0) {
+            console.log(`[MetaHandler] No matches found for title: "${extractedTitle}"`);
+            return { meta: null };
+        }
+        
+        const bestMatch = searchResults[0];
+        console.log(`[MetaHandler] Best match: "${bestMatch.name}" (similarity: ${bestMatch.similarity?.toFixed(2)})`);
+        
+        // Se la similarità è troppo bassa, non restituire risultati
+        if (bestMatch.similarity < 0.6) {
+            console.log(`[MetaHandler] Similarity too low (${bestMatch.similarity?.toFixed(2)}), skipping`);
+            return { meta: null };
+        }
+        
+        // Ottieni i dettagli della serie migliore
+        const seriesId = bestMatch.id.replace('kisskh_', '');
+        try {
+            const details = await getCachedSeriesDetails(seriesId);
+            if (!details || !Array.isArray(details.episodes) || details.episodes.length === 0) {
+                return { meta: null };
             }
-        };
+
+            // Map episodes correctly - mantieni l'ID originale per la compatibilità
+            const videos = details.episodes.map(ep => ({
+                id: `${ep.id}`,
+                title: ep.title || `Episode ${ep.number}`,
+                season: ep.season || 1,
+                episode: ep.episode || ep.number || 1
+            }));
+
+            const meta = {
+                id: `kisskh_${details.id}`, // Usa sempre l'ID di KissKH per i video
+                type: 'series',
+                name: details.title || '',
+                poster: details.thumbnail || '',
+                background: details.thumbnail || '',
+                posterShape: 'poster',
+                description: (details.description || '').replace(/\r?\n+/g, ' ').trim(),
+                releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
+                videos,
+            };
+
+            return { meta };
+        } catch (e) {
+            console.error('[MetaHandler] Error getting details for matched series:', e.message);
+            return { meta: null };
+        }
     }
-
-    // Map episodes correctly
-    const videos = details.episodes.map(ep => ({
-        id: `${ep.id}`,
-        title: ep.title || `Episode ${ep.number}`,
-        season: ep.season || 1,
-        episode: ep.episode || ep.number || 1
-    }));
-
-    const meta = {
-        id: `kisskh_${details.id}`,
-        type: 'series',
-        name: details.title || '',
-        poster: details.thumbnail || '',
-        background: details.thumbnail || '',
-        posterShape: 'poster',
-        description: (details.description || '').replace(/\r?\n+/g, ' ').trim(),
-        releaseInfo: details.releaseDate ? details.releaseDate.slice(0, 4) : '',
-        videos,
-    };
-
-    return { meta };
 });
 
 // Handler per gli stream
@@ -657,9 +676,11 @@ builder.defineStreamHandler(async ({ type, id }) => {
         };
     }
 
-    // Robust ID parsing
-    let seriesId, episodeId;
+    // Robust ID parsing per gestire sia ID interni che esterni
+    let seriesId, episodeId, isExternalId = false;
+    
     if (id.startsWith('kisskh_')) {
+        // ID interno di KissKH
         const parts = id.split(':');
         if (parts.length === 2) {
             seriesId = parts[0].replace('kisskh_', '');
@@ -671,11 +692,37 @@ builder.defineStreamHandler(async ({ type, id }) => {
             seriesId = id.replace('kisskh_', '').split(':')[0];
             episodeId = id.split(':').pop();
         }
+    } else if (id.startsWith('tt') || id.startsWith('tmdb')) {
+        // ID esterno (IMDB o TMDB) - devo prima convertirlo
+        isExternalId = true;
+        console.log(`[StreamHandler] External ID detected: ${id}`);
+        
+        // Estrai il titolo dall'ID
+        const extractedTitle = extractTitleFromExternalId(id);
+        if (!extractedTitle) {
+            console.log(`[StreamHandler] Cannot extract title from external ID: ${id}`);
+            return { streams: [] };
+        }
+        
+        // Cerca la serie corrispondente
+        const searchResults = await searchSeriesByTitle(extractedTitle, 1, kisskh.getCatalog);
+        if (searchResults.length === 0 || searchResults[0].similarity < 0.6) {
+            console.log(`[StreamHandler] No suitable match found for: ${extractedTitle}`);
+            return { streams: [] };
+        }
+        
+        const matchedSeries = searchResults[0];
+        seriesId = matchedSeries.id.replace('kisskh_', '');
+        episodeId = id.split(':').pop(); // L'episodio dovrebbe essere l'ultima parte
+        
+        console.log(`[StreamHandler] Converted external ID to: seriesId=${seriesId}, episodeId=${episodeId}`);
     } else {
+        // Formato sconosciuto
         seriesId = id.split(':')[0];
         episodeId = id.split(':').pop();
     }
-    console.log(`[StreamHandler] seriesId=${seriesId} episodeId=${episodeId}`);
+    
+    console.log(`[StreamHandler] Final: seriesId=${seriesId} episodeId=${episodeId}`);
 
     try {
         // Get stream URL and subtitles in parallel

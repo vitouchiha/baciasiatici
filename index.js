@@ -1,3 +1,6 @@
+// Carica le variabili d'ambiente dal file .env
+require('dotenv').config();
+
 // Abilita la garbage collection manuale se l'app viene avviata con --expose-gc
 if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
   try {
@@ -25,10 +28,8 @@ if (!process.env.GITHUB_TOKEN) {
 
 const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./api/stremio');
-const express = require('express');
 const path = require('path');
 const fs = require('fs').promises;
-const app = express();
 
 // Funzione per verificare la cartella cache
 async function checkCacheFolder() {
@@ -40,7 +41,7 @@ async function checkCacheFolder() {
         
         // Lista i file nella cartella cache
         const files = await fs.readdir(cacheFolder);
-        const subtitleFiles = files.filter(f => f.endsWith('.srt') || f.endsWith('.txt1'));
+        const subtitleFiles = files.filter(f => f.endsWith('.srt') || f.endsWith('.txt1') || f.endsWith('.txt'));
         
         if (subtitleFiles.length > 0) {
             console.log(`[Cache] Trovati ${subtitleFiles.length} file di sottotitoli in cache:`);
@@ -65,9 +66,6 @@ async function checkCacheFolder() {
         }
     }
 }
-
-// Configura il middleware per servire i file dei sottotitoli
-app.use('/subtitles', express.static(path.join(__dirname, 'subtitles')));
 
 const options = {
     port: process.env.PORT || 3000,

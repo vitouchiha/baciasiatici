@@ -6,6 +6,17 @@ Questo README fornisce le istruzioni per configurare correttamente le variabili 
 
 Le seguenti variabili d'ambiente devono essere configurate nel container Docker o nell'ambiente di hosting:
 
+### Configurazione GitHub (Richiesta)
+
+| Variabile | Descrizione |
+|-----------|-------------|
+| `GITHUB_TOKEN` | Token di GitHub per la creazione dei gist dei sottotitoli. [Come ottenere un token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) |
+
+> **IMPORTANTE**: Il token GitHub è necessario per il corretto funzionamento dei sottotitoli. Assicurati di:
+> 1. Creare un token con almeno lo scope `gist`
+> 2. Configurare la variabile d'ambiente prima di avviare il container
+> 3. Non condividere il token con altri
+
 ### Configurazione Puppeteer
 
 | Variabile | Valore Predefinito | Descrizione |
@@ -43,10 +54,21 @@ Per configurare queste variabili in Portainer:
 1. Vai alla sezione "Containers"
 2. Seleziona "Add container" o modifica il container esistente
 3. Scorri fino alla sezione "Environment"
-4. Aggiungi tutte le variabili elencate sopra
-5. Imposta i limiti di risorse nella sezione "Resources":
+4. Aggiungi la variabile `GITHUB_TOKEN` con il tuo token personale
+5. Aggiungi tutte le altre variabili elencate sopra se vuoi personalizzare il comportamento
+6. Imposta i limiti di risorse nella sezione "Resources":
    - Memory limit: `512M`
    - CPU limit: `0.5` (metà di un core)
+
+## Guida Rapida GitHub Token
+
+1. Vai su [GitHub Settings > Developer Settings > Personal Access Tokens > Tokens (classic)](https://github.com/settings/tokens)
+2. Clicca su "Generate new token (classic)"
+3. Dai un nome al token (es. "KissKH Addon")
+4. Seleziona solo lo scope `gist`
+5. Clicca "Generate token"
+6. **IMPORTANTE**: Copia il token mostrato e salvalo in un posto sicuro
+7. Configura la variabile d'ambiente `GITHUB_TOKEN` con il token appena creato
 
 ## Configurazione su Piattaforme Cloud
 
@@ -116,3 +138,19 @@ services:
     cpus: 0.5
 ```
 Questo file README.md fornisce tutte le informazioni necessarie per configurare correttamente le variabili d'ambiente dell'addon KissKH in diversi ambienti di hosting.
+
+## 🎬 Uso
+
+1. Cerca contenuti direttamente dalla home di Stremio
+2. I sottotitoli italiani sono caricati automaticamente
+3. Supporta ricerca per titolo e ID esterni
+
+## 📝 Note
+
+- Versione: **1.3.6**
+- Ricerca intelligente con stop automatico
+- Performance ottimizzate per Stremio
+
+---
+
+*Addon sviluppato per contenuti asiatici con focus sui sottotitoli italiani*
