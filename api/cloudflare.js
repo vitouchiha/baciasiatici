@@ -92,6 +92,7 @@ async function fetchCloudflareCookie() {
     const launchOptions = {
         headless: true,
         ...(process.env.PUPPETEER_EXECUTABLE_PATH ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH } : {}),
+        product: 'chromium',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',

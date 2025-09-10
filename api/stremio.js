@@ -230,6 +230,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
     const launchOptions = {
         headless: true,
         ...(process.env.PUPPETEER_EXECUTABLE_PATH ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH } : {}),
+        product: 'chromium',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -437,7 +438,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
 // Crea il builder con il manifest
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.3.6',
+    version: '2.0.1',
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
     logo: 'https://imgur.com/PVEr4oa.jpeg',
