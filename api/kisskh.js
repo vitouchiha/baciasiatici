@@ -29,7 +29,7 @@ async function getAxiosHeaders() {
 }
 
 function buildApiUrl({ page = 1, limit = 20, search = '' }) {
-    let url = `https://kisskh.asia/api/DramaList/List?page=${page}&type=1&sub=0&country=2&status=2&order=3&pageSize=${limit}`;
+    let url = `https://kisskh.co/api/DramaList/List?page=${page}&type=1&sub=0&country=2&status=2&order=3&pageSize=${limit}`;
     if (search && search.trim().length > 0) {
         url += `&search=${encodeURIComponent(search)}`;
     }
@@ -468,4 +468,5 @@ module.exports = {
     getEpisodeNumber,
     getSubtitlesWithPuppeteer
 };
+
 
