@@ -17,7 +17,7 @@ Addon Stremio per accedere al catalogo KissKH e ai sottotitoli auto-generati.
 > Puoi usare una VPN, un proxy residenziale italiano o un server in Italia. Se usi Portainer, puoi collegare il container a una VPN (es. con gluetun) o configurare un proxy.
 
 ## Variabili d'ambiente
-Puoi configurare le variabili tramite file `.env` (vedi `example.env`) oppure direttamente nell'interfaccia Portainer.
+Puoi configurare le variabili tramite file `.env` oppure direttamente nell'interfaccia Portainer.
 
 | Variabile                        | Descrizione                                                                 |
 |----------------------------------|-----------------------------------------------------------------------------|
@@ -159,10 +159,11 @@ Questo file README.md fornisce tutte le informazioni necessarie per configurare 
 
 ## 📝 Note
 
-- Versione: **1.3.6**
+- Versione: **2.0.1**
 - Ricerca intelligente con stop automatico
 - Performance ottimizzate per Stremio
 
 ---
 
 *Addon sviluppato per contenuti asiatici con focus sui sottotitoli italiani*
+
