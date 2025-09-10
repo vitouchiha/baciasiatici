@@ -91,8 +91,8 @@ async function fetchCloudflareCookie() {
     // Launch options with enhanced stealth
     const launchOptions = {
         headless: true,
-        ...(process.env.PUPPETEER_EXECUTABLE_PATH ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH } : {}),
-        product: 'chromium',
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        product: 'chrome',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
