@@ -1,63 +1,75 @@
-# KissKH Stremio Addon - Configurazione
-
-Questo README fornisce le istruzioni per configurare correttamente le variabili d'ambiente necessarie per eseguire l'addon KissKH in Docker, Portainer e altre piattaforme cloud.
-
-## Variabili d'Ambiente
-
-Le seguenti variabili d'ambiente devono essere configurate nel container Docker o nell'ambiente di hosting:
-
-### Configurazione GitHub (Richiesta)
-
-| Variabile | Descrizione |
-|-----------|-------------|
-| `GITHUB_TOKEN` | Token di GitHub per la creazione dei gist dei sottotitoli. [Come ottenere un token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) |
-
-> **IMPORTANTE**: Il token GitHub è necessario per il corretto funzionamento dei sottotitoli. Assicurati di:
 > 1. Creare un token con almeno lo scope `gist`
 > 2. Configurare la variabile d'ambiente prima di avviare il container
 > 3. Non condividere il token con altri
 
-### Configurazione Puppeteer
+# KissKH Stremio Addon (v2.0.1)
 
-| Variabile | Valore Predefinito | Descrizione |
-|-----------|-------------------|-------------|
-| `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD` | `true` | Evita il download di Chromium durante l'installazione di Puppeteer |
-| `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Percorso dell'eseguibile Chromium nel container |
-| `PUPPETEER_ARGS` | `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-accelerated-2d-canvas --no-first-run --no-zygote --disable-gpu --hide-scrollbars --mute-audio` | Argomenti aggiuntivi per Chromium |
+Addon Stremio per accedere al catalogo KissKH e ai sottotitoli auto-generati.
 
-### Configurazione Node.js
+## Requisiti
+- Node.js 18+
+- Docker e Docker Compose (per deploy containerizzato)
+- Un token GitHub personale con permesso `gist` (per salvare i sottotitoli)
+- **IP italiano** (VPN/proxy consigliato) per ottenere i sottotitoli auto-generati da KissKH
 
-| Variabile | Valore Predefinito | Descrizione |
-|-----------|-------------------|-------------|
-| `NODE_ENV` | `production` | Modalità di esecuzione di Node.js |
-| `ENABLE_GARBAGE_COLLECTION` | `true` | Abilita la garbage collection manuale |
-| `GC_INTERVAL` | `300000` | Intervallo per la garbage collection in ms (5 minuti) |
+## Attenzione sui sottotitoli
+> **Per ottenere i sottotitoli auto-generati da KissKH è necessario che l'IP del container/addon sia italiano.**
+> Puoi usare una VPN, un proxy residenziale italiano o un server in Italia. Se usi Portainer, puoi collegare il container a una VPN (es. con gluetun) o configurare un proxy.
 
-### Configurazione Cache
+## Variabili d'ambiente
+Puoi configurare le variabili tramite file `.env` (vedi `example.env`) oppure direttamente nell'interfaccia Portainer.
 
-| Variabile | Valore Predefinito | Descrizione |
-|-----------|-------------------|-------------|
-| `CACHE_TTL` | `3600` | Tempo di cache in secondi (1 ora) |
+| Variabile                        | Descrizione                                                                 |
+|----------------------------------|-----------------------------------------------------------------------------|
+| `GITHUB_TOKEN`                   | **Obbligatorio.** Token GitHub personale con permesso `gist`                |
+| `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD` | Lascia `true` in Docker                                                     |
+| `PUPPETEER_EXECUTABLE_PATH`      | Lascia `/usr/bin/chromium` in Docker, vuoto su Windows                      |
+| `NODE_ENV`                       | `production` consigliato                                                    |
+| `ENABLE_GARBAGE_COLLECTION`      | `true` per abilitare la garbage collection manuale                          |
+| `GC_INTERVAL`                    | Intervallo GC in ms (default 300000)                                        |
+| `CACHE_TTL`                      | Tempo di cache in secondi (default 3600)                                    |
+| `CF_COOKIE_MAX_AGE`              | Durata massima del cookie Cloudflare in ms (default 3600000)                |
+| `CF_MAX_RETRY`                   | Numero massimo di tentativi per ottenere il cookie (default 2)              |
+| `CF_RETRY_DELAY`                 | Ritardo iniziale tra i tentativi in ms (default 2000)                       |
 
-### Configurazione Cloudflare
+### Come ottenere un token GitHub per i Gist
+1. Vai su https://github.com/settings/tokens
+2. Clicca su "Generate new token"
+3. Seleziona solo lo scope `gist`
+4. Copia il token e impostalo nella variabile `GITHUB_TOKEN`
 
-| Variabile | Valore Predefinito | Descrizione |
-|-----------|-------------------|-------------|
-| `CF_COOKIE_MAX_AGE` | `3600000` | Durata massima del cookie Cloudflare in ms (1 ora) |
-| `CF_MAX_RETRY` | `3` | Numero massimo di tentativi per ottenere il cookie |
-| `CF_RETRY_DELAY` | `5000` | Ritardo iniziale tra i tentativi in ms (5 secondi) |
+## Deploy con Docker Compose
 
-## Configurazione in Portainer
+```yaml
+version: '3.8'
+services:
+  baciasiatici-addon:
+    build: .
+    container_name: baciasiatici
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./cache:/app/cache
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+```
 
-Per configurare queste variabili in Portainer:
+## Deploy su Portainer
+1. Crea uno stack o container usando la configurazione sopra
+2. Imposta le variabili d'ambiente richieste (in particolare `GITHUB_TOKEN` e, se serve, le variabili Puppeteer)
+3. Assicurati che il container abbia un IP italiano (VPN/proxy)
+4. Avvia il container
 
-1. Vai alla sezione "Containers"
-2. Seleziona "Add container" o modifica il container esistente
-3. Scorri fino alla sezione "Environment"
-4. Aggiungi la variabile `GITHUB_TOKEN` con il tuo token personale
-5. Aggiungi tutte le altre variabili elencate sopra se vuoi personalizzare il comportamento
-6. Imposta i limiti di risorse nella sezione "Resources":
-   - Memory limit: `512M`
+## Note
+- Le cartelle `cache/` e `data/` sono persistenti e possono essere montate come volumi
+- Puoi copiare `example.env` in `.env` e modificarlo secondo le tue esigenze
+- Per problemi con Chromium su Windows, assicurati che la variabile `PUPPETEER_EXECUTABLE_PATH` sia vuota
+
+---
+
+Per qualsiasi problema o richiesta, apri una issue sul repository o contatta lo sviluppatore.
    - CPU limit: `0.5` (metà di un core)
 
 ## Guida Rapida GitHub Token

@@ -1,3 +1,4 @@
+version: '3.8'
 services:
   baciasiatici-addon:
     build: .
@@ -5,7 +6,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./cache:/app/cache
+      - ./cache:/app/cache  # Cache per i sottotitoli decriptati
     env_file:
       - .env
     restart: unless-stopped

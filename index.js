@@ -1,3 +1,5 @@
+// Forza la variabile d'ambiente PUPPETEER_EXECUTABLE_PATH a stringa vuota per evitare override su Windows
+process.env.PUPPETEER_EXECUTABLE_PATH = "";
 // Carica le variabili d'ambiente dal file .env
 require('dotenv').config();
 
