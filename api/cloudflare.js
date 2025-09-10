@@ -91,7 +91,7 @@ async function fetchCloudflareCookie() {
     // Launch options with enhanced stealth
     const launchOptions = {
         headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || executablePath(),
+        ...(process.env.PUPPETEER_EXECUTABLE_PATH ? { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH } : {}),
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',

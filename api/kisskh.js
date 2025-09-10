@@ -468,5 +468,3 @@ module.exports = {
     getEpisodeNumber,
     getSubtitlesWithPuppeteer
 };
-
-
