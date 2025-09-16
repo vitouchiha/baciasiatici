@@ -17,7 +17,7 @@ Addon Stremio per accedere al catalogo KissKH e ai sottotitoli auto-generati.
 > Puoi usare una VPN, un proxy residenziale italiano o un server in Italia. Se usi Portainer, puoi collegare il container a una VPN (es. con gluetun) o configurare un proxy.
 
 ## Variabili d'ambiente
-Puoi configurare le variabili tramite file `.env` oppure direttamente nell'interfaccia Portainer.
+Puoi configurare le variabili tramite file `.env` (vedi `example.env`) oppure direttamente nell'interfaccia Portainer.
 
 | Variabile                        | Descrizione                                                                 |
 |----------------------------------|-----------------------------------------------------------------------------|
@@ -40,11 +40,17 @@ Puoi configurare le variabili tramite file `.env` oppure direttamente nell'inter
 
 ## Deploy con Docker Compose
 
+Il metodo consigliato è utilizzare l'immagine Docker pre-compilata, che garantisce la compatibilità multi-architettura (amd64 e arm64).
+
+1.  Crea un file `.env` (puoi copiare `example.env`) e inserisci il tuo `GITHUB_TOKEN`.
+2.  Crea un file `docker-compose.yml` con il seguente contenuto.
+3.  Esegui il comando `docker-compose up -d`.
+
 ```yaml
 version: '3.8'
 services:
   baciasiatici-addon:
-    build: .
+    image: your-dockerhub-username/baciasiatici-addon:latest # Sostituisci con l'immagine corretta
     container_name: baciasiatici
     ports:
       - "3000:3000"
@@ -54,6 +60,8 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
 ```
 
 ## Deploy su Portainer
@@ -122,7 +130,7 @@ Se riscontri problemi con il bypass di Cloudflare:
 1. Verifica che Chromium sia installato correttamente nel container
 2. Controlla che le variabili d'ambiente siano configurate correttamente
 3. Aumenta il valore di `CF_MAX_RETRY` e `CF_RETRY_DELAY` per dare più tempo al bypass di Cloudflare
-4. Controlla i log del container per eventuali errori
+4. Controlla i log del container per eventuali errori. All'avvio, un messaggio indicherà l'architettura rilevata (es. `x64` per AMD/Intel, `arm64` per Apple Silicon/Raspberry Pi).
 
 ## Esempio di docker-compose.yml
 
@@ -151,6 +159,18 @@ services:
 ```
 Questo file README.md fornisce tutte le informazioni necessarie per configurare correttamente le variabili d'ambiente dell'addon KissKH in diversi ambienti di hosting.
 
+
++### Come Costruire l'Immagine Multi-Architettura (Opzionale) + +Se desideri costruire e pubblicare la tua versione dell'immagine Docker compatibile con più architetture (amd64 e arm64), puoi usare docker buildx. Questo è utile se hai fatto modifiche al codice e vuoi distribuirle. + +1. Assicurati che buildx sia abilitato. Di solito è standard nelle versioni recenti di Docker Desktop. + +2. Crea un nuovo "builder" (se non ne hai già uno):
+
+sh
+docker buildx create --name mybuilder --use
+plaintext
++3. Esegui la build e pubblicala sul tuo registry (es. Docker Hub):
+
+Sostituisci your-dockerhub-username con il tuo username. La pubblicazione (--push) è necessaria per le immagini multi-architettura.
+sh
+docker buildx build --platform linux/amd64,linux/arm64 -t your-dockerhub-username/baciasiatici-addon:latest --push .
+
 ## 🎬 Uso
 
 1. Cerca contenuti direttamente dalla home di Stremio
@@ -166,4 +186,3 @@ Questo file README.md fornisce tutte le informazioni necessarie per configurare 
 ---
 
 *Addon sviluppato per contenuti asiatici con focus sui sottotitoli italiani*
-

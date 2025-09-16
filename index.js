@@ -3,6 +3,9 @@ process.env.PUPPETEER_EXECUTABLE_PATH = "";
 // Carica le variabili d'ambiente dal file .env
 require('dotenv').config();
 
+// Log dell'architettura del processore per il debug
+console.log(`[System] Addon in esecuzione su architettura: ${process.arch}`);
+
 // Abilita la garbage collection manuale se l'app viene avviata con --expose-gc
 if (process.env.ENABLE_GARBAGE_COLLECTION === 'true') {
   try {

@@ -1,6 +1,8 @@
 FROM node:18-slim
 
-# Installa solo i pacchetti essenziali per Chromium
+# Installa i pacchetti essenziali per Chromium.
+# Il pacchetto 'chromium' è disponibile per le architetture amd64 e arm64 su Debian,
+# rendendo l'immagine compatibile con entrambe le piattaforme.
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-freefont-ttf \
@@ -20,24 +22,19 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     CF_RETRY_DELAY=5000 \
     GITHUB_TOKEN=""
 
-# Crea directory app e sottotitoli
 WORKDIR /app
-RUN mkdir -p subtitles && chown -R node:node subtitles
 
-# Copia package.json e package-lock.json
+# Copia i file di definizione delle dipendenze per sfruttare il caching di Docker
 COPY package*.json ./
 
-# Installa dipendenze in modalità produzione
+# Installa le dipendenze di produzione
 RUN npm ci --only=production
 
-# Imposta permessi per la directory subtitles
-RUN chmod 755 subtitles
-
-# Copia il resto dei file
+# Copia il resto dei file dell'applicazione
 COPY . .
 
-# Cambia proprietario dei file
-RUN chown -R node:node .
+# Crea le directory per cache/dati (se non esistono) e imposta il proprietario corretto per l'intera app.
+RUN mkdir -p cache data && chown -R node:node .
 
 # Passa all'utente non-root
 USER node
