@@ -1,0 +1,10 @@
+node_modules/
+.venv/
+cloudflare-debug.png
+cache/
+data/
+.env
+package-lock-IntelNuc.json
+package-IntelNuc.json
+index-IntelNuc.js
+cloudflare-IntelNuc.js

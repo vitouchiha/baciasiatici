@@ -1,11 +1,16 @@
+version: '3.8'
 services:
   baciasiatici-addon:
-    build: .
+    # Per usare l'immagine pre-compilata (consigliato). Sostituisci con il nome della tua immagine.
+    image: your-dockerhub-username/baciasiatici-addon:latest
+    # In alternativa, per costruire l'immagine localmente, decommenta la riga seguente e commenta 'image'.
+    # build: .
     container_name: baciasiatici
     ports:
       - "3000:3000"
     volumes:
       - ./cache:/app/cache
+      - ./data:/app/data
     env_file:
       - .env
     restart: unless-stopped

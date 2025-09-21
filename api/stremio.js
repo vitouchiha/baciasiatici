@@ -37,138 +37,111 @@ async function getAxiosHeaders() {
 // Funzione per recuperare i sottotitoli usando Puppeteer
 async function getSubtitlesWithPuppeteer(serieId, episodeId) {
     const cacheKey = `sub_${serieId}_${episodeId}`;
-    
     // Controlla prima nella cache
     const cachedGist = await cache.get(cacheKey);
     if (cachedGist && cachedGist.url) {
         console.log(`[subtitles] Found cached gist URL: ${cachedGist.url}`);
-        return [{
-            url: cachedGist.url,
-            lang: 'it'
-        }];
+        return [{ url: cachedGist.url, lang: 'it' }];
     }
 
     console.log(`[subtitles] Fetching subtitles for serie ${serieId} episode ${episodeId}`);
-    const browser = await puppeteerExtra.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
+    const browser = await puppeteerExtra.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    let subApiUrl = null;
     try {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
-        
-        let subApiUrl = null;
+        // Intercetta la richiesta XHR/fetch all'endpoint /api/Sub/ per recuperare la kkey
         page.on('request', request => {
             const url = request.url();
             if (!subApiUrl && url.includes('/api/Sub/')) {
                 subApiUrl = url;
-                console.log('[subtitles] Found subtitle API endpoint:', url);
+                console.log('[subtitles] Intercepted subtitle API endpoint:', url);
             }
         });
-
-        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`, {
-            waitUntil: 'networkidle2',
-            timeout: 60000
-        });
-        await new Promise(resolve => setTimeout(resolve, 4000));
-
-        if (!subApiUrl) {
-            console.warn('[subtitles] No subtitle endpoint intercepted');
-            return [];
+        await page.goto(`https://kisskh.co/Drama/Any/Episode-Any?id=${serieId}&ep=${episodeId}`, { waitUntil: 'networkidle2', timeout: 60000 });
+        // Attendi che la richiesta venga intercettata
+        for (let i = 0; i < 20 && !subApiUrl; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
+        await browser.close();
+    } catch (error) {
+        console.error('[subtitles] Error intercepting subtitle API:', error);
+        try { await browser.close(); } catch {}
+        return [];
+    }
 
-        const headers = await getAxiosHeaders();
-        const response = await axios.get(subApiUrl, { 
-            responseType: 'json',
-            headers,
-            timeout: 10000
-        });
+    if (!subApiUrl) {
+        console.warn('[subtitles] No subtitle API endpoint intercepted');
+        return [];
+    }
 
-        if (!response.data) {
-            console.error('[subtitles] Invalid API response');
-            return [];
+    // Ora subApiUrl contiene già l'endpoint completo con kkey
+    const headers = await getAxiosHeaders();
+    let response;
+    try {
+        response = await axios.get(subApiUrl, { responseType: 'json', headers, timeout: 10000 });
+    } catch (error) {
+        console.error('[subtitles] Error fetching subtitle API:', error);
+        return [];
+    }
+    if (!response.data) {
+        console.error('[subtitles] Invalid API response');
+        return [];
+    }
+    let subtitleList = Array.isArray(response.data) ? response.data : [response.data];
+    console.log(`[subtitles] Found ${subtitleList.length} subtitle tracks from API`);
+    // Filtra solo i sottotitoli italiani
+    subtitleList = subtitleList.filter(sub => {
+        if (!isItalianSubtitle(sub, sub.src)) {
+            console.log(`[subtitles] Skipping non-Italian subtitle: ${sub.src || 'unknown'}`);
+            return false;
         }
-
-        let subtitleList = Array.isArray(response.data) ? response.data : [response.data];
-        console.log(`[subtitles] Found ${subtitleList.length} subtitle tracks from API`);
-
-        // Filtra solo i sottotitoli italiani
-        subtitleList = subtitleList.filter(sub => {
-            if (!isItalianSubtitle(sub, sub.src)) {
-                console.log(`[subtitles] Skipping non-Italian subtitle: ${sub.src || 'unknown'}`);
-                return false;
+        return true;
+    });
+    for (const sub of subtitleList) {
+        let subtitleUrl = sub.src;
+        if (!subtitleUrl && sub.GET && sub.GET.host && sub.GET.filename) {
+            subtitleUrl = `${sub.GET.scheme || 'https'}://${sub.GET.host}${sub.GET.filename}`;
+            if (sub.GET.query && sub.GET.query.v) {
+                subtitleUrl += `?v=${sub.GET.query.v}`;
             }
-            return true;
-        });
-
-        const results = [];
-        for (const sub of subtitleList) {
-            let subtitleUrl = sub.src;
-            if (!subtitleUrl && sub.GET && sub.GET.host && sub.GET.filename) {
-                subtitleUrl = `${sub.GET.scheme || 'https'}://${sub.GET.host}${sub.GET.filename}`;
-                if (sub.GET.query && sub.GET.query.v) {
-                    subtitleUrl += `?v=${sub.GET.query.v}`;
-                }
-            }
-            
-            if (!subtitleUrl) continue;
-
-            try {
-                console.log(`[subtitles] Downloading Italian subtitle: ${subtitleUrl}`);
-                const subResponse = await axios.get(subtitleUrl, { 
-                    responseType: 'arraybuffer',
-                    headers,
-                    timeout: 10000
-                });
-
-                let content = subResponse.data;
-                const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
-                const isTxt = subtitleUrl.toLowerCase().endsWith('.txt');
-                const isEncrypted = isTxt1 || isTxt;
-                
-                // Decrittare se necessario
-                if (isEncrypted) {
-                    try {
-                        content = decryptKisskhSubtitleFull(content.toString('utf8'));
-                    } catch (error) {
-                        console.error('[subtitles] Decryption failed:', error);
-                        continue;
-                    }
-                } else {
-                    content = content.toString('utf8');
-                }
-
-                // Verifica che sia un SRT valido
-                if (!content.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
-                    console.warn('[subtitles] Invalid SRT format');
+        }
+        if (!subtitleUrl) continue;
+        try {
+            console.log(`[subtitles] Downloading Italian subtitle: ${subtitleUrl}`);
+            const subResponse = await axios.get(subtitleUrl, { responseType: 'arraybuffer', headers, timeout: 10000 });
+            let content = subResponse.data;
+            const isTxt1 = subtitleUrl.toLowerCase().endsWith('.txt1');
+            const isTxt = subtitleUrl.toLowerCase().endsWith('.txt');
+            const isEncrypted = isTxt1 || isTxt;
+            // Decrittare se necessario
+            if (isEncrypted) {
+                try {
+                    content = decryptKisskhSubtitleFull(content.toString('utf8'));
+                } catch (error) {
+                    console.error('[subtitles] Decryption failed:', error);
                     continue;
                 }
-
-                // Crea un gist con il contenuto
-                const gistUrl = await cache.setSRTWithGist(cacheKey, content, 'it');
-                if (gistUrl) {
-                    console.log(`[subtitles] Created gist: ${gistUrl}`);
-                    return [{
-                        url: gistUrl,
-                        lang: 'it'
-                    }];
-                }
-            } catch (error) {
-                console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
+            } else {
+                content = content.toString('utf8');
+            }
+            // Verifica che sia un SRT valido
+            if (!content.match(/^\d+\r?\n\d{2}:\d{2}:\d{2},\d{3}/)) {
+                console.warn('[subtitles] Invalid SRT format');
                 continue;
             }
-        }
-
-        return [];
-    } catch (error) {
-        console.error('[subtitles] Error:', error);
-        return [];
-    } finally {
-        if (browser) {
-            await browser.close().catch(console.error);
+            // Crea un gist con il contenuto
+            const gistUrl = await cache.setSRTWithGist(cacheKey, content, 'it');
+            if (gistUrl) {
+                console.log(`[subtitles] Created gist: ${gistUrl}`);
+                return [{ url: gistUrl, lang: 'it' }];
+            }
+        } catch (error) {
+            console.error(`[subtitles] Error processing subtitle ${subtitleUrl}:`, error.message);
+            continue;
         }
     }
+    return [];
 }
 
 // Funzione per estrarre lo stream URL
@@ -254,33 +227,24 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
         }
     }
 
-    const browser = await puppeteerExtra.launch({
+    const launchOptions = {
         headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        product: 'chrome',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-web-security',
             '--disable-features=IsolateOrigins,site-per-process'
         ]
-    });
+    };
+    const browser = await puppeteerExtra.launch(launchOptions);
     let streamUrl = null;
 
     try {
         const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
-
-        // Enable request interception
-        await page.setRequestInterception(true);
-
-        // Set up request handler
-        page.on('request', request => {
-            // Block image and font requests to speed up loading
-            if (['image', 'font', 'stylesheet'].includes(request.resourceType())) {
-                request.abort();
-            } else {
-                request.continue();
-            }
-        });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+    // ...il blocco delle risorse è ora gestito dai plugin puppeteer-extra...
 
         const cfCookieString = await getCloudflareCookie();
         const cfClearanceValue = cfCookieString.split('=')[1];
@@ -474,7 +438,7 @@ async function resolveEpisodeStreamUrl(seriesId, episodeId) {
 // Crea il builder con il manifest
 const builder = new addonBuilder({
     id: 'com.kisskh.addon',
-    version: '1.3.6',
+    version: '2.0.1',
     name: 'KissKH Addon',
     description: 'Asian content with Italian subtitles',
     logo: 'https://imgur.com/PVEr4oa.jpeg',
